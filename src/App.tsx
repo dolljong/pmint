@@ -562,39 +562,103 @@ function SectionSvg({
       ? code.stressBlock(surface.materials.concrete.fc / code.materialFactors.concrete).beta
       : 0.8;
     const blockS = sMax - beta * c;
-    return { naS: sMax - c, blockS, compressed: clipRingsHalfPlane(rings, nx, ny, blockS) };
+    return {
+      naS: sMax - c,
+      blockS,
+      c,
+      a: beta * c,
+      compressed: clipRingsHalfPlane(rings, nx, ny, blockS),
+    };
   }, [rings, nx, ny, c, surface]);
 
   return (
-    <svg className="section-svg" viewBox={`${frame.minX} ${frame.minY} ${frame.width} ${frame.height}`}>
-      <g transform="scale(1 -1)">
-        <path d={ringsToPath(rings)} fillRule="evenodd" className="concrete-shape" />
-        {na && na.compressed.length > 0 && (
-          <path d={ringsToPath(na.compressed)} fillRule="evenodd" className="stress-block-fill" />
-        )}
-        {na && <AxisLine nx={nx} ny={ny} s={na.blockS} span={span} center={frameCenter} className="stress-block-edge" />}
-        {na && <AxisLine nx={nx} ny={ny} s={na.naS} span={span} center={frameCenter} className="neutral-axis-line" />}
+    <div className="section-view">
+      <svg className="section-svg" viewBox={`${frame.minX} ${frame.minY} ${frame.width} ${frame.height}`}>
+        <g transform="scale(1 -1)">
+          <path d={ringsToPath(rings)} fillRule="evenodd" className="concrete-shape" />
+          {na && na.compressed.length > 0 && (
+            <path d={ringsToPath(na.compressed)} fillRule="evenodd" className="stress-block-fill" />
+          )}
+          {na && <AxisLine nx={nx} ny={ny} s={na.blockS} span={span} center={frameCenter} className="stress-block-edge" />}
+          {na && <AxisLine nx={nx} ny={ny} s={na.naS} span={span} center={frameCenter} className="neutral-axis-line" />}
 
-        {rebars.map((bar) => (
-          <circle key={bar.id} className="rebar-dot" cx={bar.x} cy={bar.y} r={Math.max(6, bar.diameter / 2)} />
-        ))}
+          {rebars.map((bar) => (
+            <circle key={bar.id} className="rebar-dot" cx={bar.x} cy={bar.y} r={Math.max(6, bar.diameter / 2)} />
+          ))}
 
-        <line className="axis" x1={frame.minX} x2={frame.minX + frame.width} y1="0" y2="0" />
-        <line className="axis" x1="0" x2="0" y1={frame.minY} y2={frame.minY + frame.height} />
+          <line className="axis" x1={frame.minX} x2={frame.minX + frame.width} y1="0" y2="0" />
+          <line className="axis" x1="0" x2="0" y1={frame.minY} y2={frame.minY + frame.height} />
 
-        <g className="centroid-marker">
-          <circle cx={geo.x} cy={geo.y} r={Math.max(5, frame.width * 0.008)} />
-        </g>
-        {plastic && (
-          <g className="plastic-marker">
-            <line x1={plastic.x - frame.width * 0.022} x2={plastic.x + frame.width * 0.022} y1={plastic.y} y2={plastic.y} />
-            <line x1={plastic.x} x2={plastic.x} y1={plastic.y - frame.width * 0.022} y2={plastic.y + frame.width * 0.022} />
+          <g className="centroid-marker">
+            <circle cx={geo.x} cy={geo.y} r={Math.max(5, frame.width * 0.008)} />
           </g>
-        )}
-      </g>
-      <text className="svg-legend" x={frame.minX + frame.width * 0.03} y={frame.minY + frame.height * 0.08}>
-        ○ 기하도심   ✛ 소성중심(모멘트 기준점)
-      </text>
+          {plastic && (
+            <g className="plastic-marker">
+              <line x1={plastic.x - frame.width * 0.022} x2={plastic.x + frame.width * 0.022} y1={plastic.y} y2={plastic.y} />
+              <line x1={plastic.x} x2={plastic.x} y1={plastic.y - frame.width * 0.022} y2={plastic.y + frame.width * 0.022} />
+            </g>
+          )}
+        </g>
+      </svg>
+      <SectionLegend na={na} />
+    </div>
+  );
+}
+
+/**
+ * 단면 뷰 범례.
+ *
+ * SVG 안의 <text> 로 넣으면 viewBox 가 단면 치수(mm)라서 글자 크기가 단면 크기에 좌우된다
+ * (3000x4000 교각에서는 사실상 보이지 않는다). HTML 로 빼고 견본만 작은 SVG 로 그린다.
+ */
+function SectionLegend({ na }: { na?: { naS: number; blockS: number; a: number; c: number } }) {
+  return (
+    <ul className="section-legend">
+      <li>
+        <Swatch kind="line" className="neutral-axis-line" />
+        <span className="name">중립축 (N.A.)</span>
+        <span className="desc">{na ? `c = ${fmt(na.c)} mm` : "변형률 0 인 선"}</span>
+      </li>
+      <li>
+        <Swatch kind="line" className="stress-block-edge" />
+        <span className="name">등가응력블록 하단</span>
+        <span className="desc">{na ? `a = β₁c = ${fmt(na.a)} mm` : "a = β₁·c"}</span>
+      </li>
+      <li>
+        <Swatch kind="fill" className="stress-block-fill" />
+        <span className="name">압축영역</span>
+        <span className="desc">중공 공제됨</span>
+      </li>
+      <li>
+        <Swatch kind="circle" className="centroid-marker" />
+        <span className="name">기하 도심</span>
+        <span className="desc">콘크리트 단면 중심</span>
+      </li>
+      <li>
+        <Swatch kind="cross" className="plastic-marker" />
+        <span className="name">소성중심</span>
+        <span className="desc">모멘트 기준점 (KDS 14 20 20)</span>
+      </li>
+    </ul>
+  );
+}
+
+function Swatch({ kind, className }: { kind: "line" | "fill" | "circle" | "cross"; className: string }) {
+  return (
+    <svg className="swatch" viewBox="0 0 22 12" width="22" height="12" aria-hidden="true">
+      {kind === "line" && <line className={className} x1="1" y1="6" x2="21" y2="6" vectorEffect="non-scaling-stroke" />}
+      {kind === "fill" && <rect className={className} x="1" y="1" width="20" height="10" />}
+      {kind === "circle" && (
+        <g className={className}>
+          <circle cx="11" cy="6" r="4.5" vectorEffect="non-scaling-stroke" />
+        </g>
+      )}
+      {kind === "cross" && (
+        <g className={className}>
+          <line x1="5" y1="6" x2="17" y2="6" vectorEffect="non-scaling-stroke" />
+          <line x1="11" y1="1" x2="11" y2="11" vectorEffect="non-scaling-stroke" />
+        </g>
+      )}
     </svg>
   );
 }

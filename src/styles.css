@@ -724,10 +724,75 @@ h2 {
   stroke-width: 2.5;
 }
 
-.svg-legend {
-  font-size: 13px;
-  fill: #6d7a80;
+/* ---------- 단면 뷰 ---------- */
+
+/*
+ * 단면 SVG 의 viewBox 단위는 mm 다. stroke-width 를 사용자 단위로 두면
+ * 3000x4000 교각(viewBox 4040)에서 2mm 선이 0.25px 로 렌더링되어 사실상 사라진다.
+ * non-scaling-stroke 로 선 굵기와 파선 간격을 화면 픽셀 기준으로 고정한다.
+ */
+.section-svg .concrete-shape,
+.section-svg .stress-block-fill,
+.section-svg .stress-block-edge,
+.section-svg .neutral-axis-line,
+.section-svg .axis,
+.section-svg .rebar-dot,
+.section-svg .centroid-marker circle,
+.section-svg .plastic-marker line {
+  vector-effect: non-scaling-stroke;
 }
+
+/* 범례가 항상 보이도록 도형 영역 높이를 제한한다. */
+.section-svg {
+  max-height: 460px;
+}
+
+/* ---------- 단면 뷰 범례 ---------- */
+
+.section-view {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  min-height: 0;
+  flex: 1;
+}
+
+.section-legend {
+  list-style: none;
+  margin: 0;
+  padding: 10px 12px;
+  border-top: 1px solid #e4eaec;
+  display: grid;
+  gap: 5px;
+}
+
+.section-legend li {
+  display: grid;
+  grid-template-columns: 26px minmax(112px, auto) 1fr;
+  align-items: center;
+  gap: 8px;
+  font-size: 12px;
+  color: #47555c;
+}
+
+.section-legend .name {
+  font-weight: 600;
+  color: #23343c;
+}
+
+.section-legend .desc {
+  color: #7b878d;
+  font-variant-numeric: tabular-nums;
+}
+
+.swatch {
+  overflow: visible;
+}
+
+.swatch .stress-block-fill {
+  stroke-width: 1;
+}
+
 
 .muted-svg {
   font-size: 13px;
