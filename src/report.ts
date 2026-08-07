@@ -8,9 +8,10 @@ import {
   signedArea,
 } from "./engine/geometry";
 import { checkDemand, concreteElasticModulus, type ColumnGeometry, type DemandInput } from "./engine/demand";
+import { parabolicRectangularLaw } from "./engine/concreteLaw";
 import { breslerReciprocal, ec2BiaxialCheck } from "./engine/simplified";
 import { capacityAt } from "./engine/solve";
-import type { SectionResponse } from "./engine/section";
+import { referenceConcreteStress, type SectionResponse } from "./engine/section";
 import type { InteractionSurface } from "./engine/surface";
 import type { MaterialSet, Rebar, Ring } from "./engine/types";
 
@@ -45,10 +46,12 @@ export function buildReport(input: ReportInput): string {
   const ec = concreteElasticModulus(materials);
   const fcd = materials.concrete.fc / code.materialFactors.concrete;
   const fyd = materials.steel.fy / code.materialFactors.steel;
-  const block = code.stressBlock(fcd);
+  const block = code.stressBlock(materials.concrete.fc);
   const rx = area > 0 ? Math.sqrt(Math.abs(moments.ix) / area) : 0;
   const ry = area > 0 ? Math.sqrt(Math.abs(moments.iy) / area) : 0;
   const usesAxialCutoff = code.designBasis === "strength_reduction";
+  const method = surface.integration.method ?? code.defaultIntegration;
+  const law = parabolicRectangularLaw(materials.concrete.fc);
 
   const ringRows = rings.map(
     (ring) =>
@@ -75,8 +78,19 @@ export function buildReport(input: ReportInput): string {
     `        설계 기준강도 : fck = ${pad(fmt(materials.concrete.fc), 8)} MPa,  fy  = ${pad(fmt(materials.steel.fy), 8)} MPa`,
     `        계산용 강도   : fcd = ${pad(fmt(fcd), 8)} MPa,  fyd = ${pad(fmt(fyd), 8)} MPa`,
     `        재료 탄성계수 : Ec  = ${pad(fmt(ec), 8)} MPa,  Es  = ${pad(fmt(materials.steel.es), 8)} MPa`,
-    `        재료계수      : gamma_c = ${fmt(code.materialFactors.concrete)}, gamma_s = ${fmt(code.materialFactors.steel)}`,
-    `        등가응력블록  : 0.85*eta = ${fmt(block.alpha)}, beta1 = ${fmt(block.beta)}`,
+    ...(usesAxialCutoff
+      ? [`        재료계수      : gamma_c = ${fmt(code.materialFactors.concrete)}, gamma_s = ${fmt(code.materialFactors.steel)}`]
+      : [
+          `        재료 저항계수 : phi_c = ${fmt(1 / code.materialFactors.concrete)}, phi_s = ${fmt(1 / code.materialFactors.steel)}` +
+            `   (fcd = phi_c*fck, fyd = phi_s*fy)`,
+        ]),
+    `        압축영역 적분 : ${method === "fiber" ? "포물선-직선 (파이버)" : "등가직사각형 응력블록"}`,
+    ...(method === "fiber"
+      ? [
+          `        f-e 곡선계수  : n = ${fmt(law.n)}, eco = ${strain(law.ec0)}, ecu = ${strain(law.ecu)}` +
+            `,  정점응력 = ${fmt(referenceConcreteStress(materials, code, method))} MPa`,
+        ]
+      : [`        등가응력블록  : 0.85*eta = ${fmt(block.alpha)}, beta1 = ${fmt(block.beta)}`]),
     `        극한변형률    : ecu = ${strain(materials.concrete.ecu)},  ey = ${strain(materials.steel.fy / materials.steel.es)}`,
     "",
     "    3) 단면 제원",

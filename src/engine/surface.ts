@@ -83,7 +83,7 @@ export interface SurfaceOptions {
   /** 자오선당 c 분할 수. 기본 60. */
   cSteps?: number;
   transverseReinforcement?: TransverseReinforcement;
-  /** 콘크리트 압축영역 적분 방식 */
+  /** 콘크리트 압축영역 적분 방식. 미지정이면 설계법 기본값. */
   method?: IntegrationMethod;
   /** 파이버 밴드 수 */
   fiberBands?: number;
@@ -107,10 +107,13 @@ export function computeSurface(
   const model: SectionModel = { rings, rebars: section.rebars };
   const code = designCodes[options.designCode];
   const transverse = options.transverseReinforcement ?? "tie";
+  // 여기서 한 번 확정해 둔다. surface.integration 을 읽는 쪽(UI/보고서)이
+  // undefined 를 만나 "등가블록이겠지" 라고 오해하지 않도록.
+  const method = options.method ?? code.defaultIntegration;
   const integration: IntegrationOptions = {
     transverseReinforcement: transverse,
-    reference: plasticCentroid(model, materials, code),
-    method: options.method,
+    reference: plasticCentroid(model, materials, code, method),
+    method,
     fiberBands: options.fiberBands,
     taperReduction: options.taperReduction,
   };
@@ -131,7 +134,7 @@ export function computeSurface(
   for (let i = 0; i < thetaSteps; i += 1) {
     const theta = (2 * Math.PI * i) / thetaSteps;
     thetas.push(theta);
-    meridians.push(buildMeridian(model, materials, code, integration, theta, cSteps, i, axialCap));
+    meridians.push(buildMeridian(model, materials, code, integration, theta, cSteps, `m${i}`, axialCap));
   }
 
   return {
@@ -159,7 +162,7 @@ function buildMeridian(
   integration: IntegrationOptions,
   theta: number,
   cSteps: number,
-  thetaIndex: number,
+  idPrefix: string,
   axialCap: number,
 ): SurfacePoint[] {
   const { nx, ny } = axisNormal(theta);
@@ -172,10 +175,77 @@ function buildMeridian(
     const ratio = j / (cSteps - 1);
     const c = 0.02 * depth + ratio * 1.8 * depth;
     const response = sectionResponse(model, materials, code, { theta, c }, integration);
-    points.push(toSurfacePoint(`m${thetaIndex}-${j}`, theta, c, response, axialCap));
+    points.push(toSurfacePoint(`${idPrefix}-${j}`, theta, c, response, axialCap));
   }
 
   return points;
+}
+
+export interface MeridianOptions {
+  /** c 분할 수. 기본은 곡면과 동일. */
+  cSteps?: number;
+  /**
+   * 순압축 쪽으로 잇는 꼬리 점 수. 0 이면 buildMeridian 과 완전히 같은 c 범위다.
+   *
+   * 자오선의 c 상한 1.8·h_θ 는 Pn0 에 못 미친다(800x1000 fck80 에서 38655 < 44278).
+   * 그 사이 축력의 하중케이스는 곡선이 **끝나기 전에** 점이 떠 버리므로, 화면·보고서는
+   * 꼬리를 붙여 곡선을 순압축까지 잇는다. 검토(solve.ts)는 자체적으로 c 를 40·h_θ 까지
+   * 훑으므로 이 꼬리와 무관하다.
+   */
+  tailSteps?: number;
+}
+
+/** 꼬리 끝 c. solveAtTheta 의 탐색 상한과 맞춘다. */
+const TAIL_C_FACTOR = 40;
+
+/**
+ * 임의 θ 의 자오선을 즉석 계산한다.
+ *
+ * meridianAt() 은 미리 계산해 둔 thetaSteps 방향 중 **가장 가까운 것**을 고르므로
+ * 최대 반칸(기본 2.5도) 어긋난다. 검토(solve.ts capacityAt)는 역해석으로 정확한 θ 를
+ * 0.0006도 까지 수렴시키는데 화면 곡선만 격자에 스냅하면, 사용률이 정확히 1.0 인
+ * 하중점이 곡선 **안쪽**에 찍혀 여유가 있는 것처럼 보인다.
+ * 800x1000 fck80 한계상태설계법 LC2 에서 θ 2.02도 차이가 |Md| 2.25% 차이로 나타났다.
+ *
+ * 비용은 곡면 생성의 1/thetaSteps (기본 1/72).
+ */
+export function meridianAtTheta(
+  surface: InteractionSurface,
+  theta: number,
+  options: MeridianOptions = {},
+): SurfacePoint[] {
+  const angle = normalizeAngle(theta);
+  const steps = Math.max(8, Math.round(options.cSteps ?? surface.meridians[0]?.length ?? DEFAULT_C_STEPS));
+  const body = buildMeridian(
+    surface.section,
+    surface.materials,
+    surface.code,
+    surface.integration,
+    angle,
+    steps,
+    "exact",
+    surface.axialCap,
+  );
+
+  const tailSteps = Math.max(0, Math.round(options.tailSteps ?? 0));
+  if (tailSteps === 0 || body.length === 0) return body;
+
+  const { nx, ny } = axisNormal(angle);
+  const { sMin, sMax } = sectionProjectionRange(surface.section.rings, nx, ny);
+  const depth = sMax - sMin;
+  const cStart = body[body.length - 1].c;
+  const cEnd = TAIL_C_FACTOR * depth;
+  if (!(depth > 0) || !(cEnd > cStart)) return body;
+
+  const tail: SurfacePoint[] = [];
+  for (let i = 1; i <= tailSteps; i += 1) {
+    // 기하 분포. 축력은 c 에 대해 빠르게 포화하므로 균등 분할은 낭비다.
+    const c = cStart * (cEnd / cStart) ** (i / tailSteps);
+    const response = sectionResponse(surface.section, surface.materials, surface.code, { theta: angle, c }, surface.integration);
+    tail.push(toSurfacePoint(`exact-tail-${i}`, angle, c, response, surface.axialCap));
+  }
+
+  return [...body, ...tail];
 }
 
 function toSurfacePoint(

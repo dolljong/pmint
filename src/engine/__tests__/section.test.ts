@@ -37,7 +37,8 @@ function referenceUniaxial(
   const code = designCodes[designCode];
   const fc = materials.concrete.fc / code.materialFactors.concrete;
   const fy = materials.steel.fy / code.materialFactors.steel;
-  const stressBlock = code.stressBlock(fc);
+  // eta / beta1 표는 fck 의 함수다 (fcd 가 아니다).
+  const stressBlock = code.stressBlock(materials.concrete.fc);
   const compressed = clipPolygonAboveY(polygon, box.maxY - stressBlock.beta * c);
   const compressedArea = Math.abs(polygonArea(compressed));
   const compressedCentroid = compressedArea > 1e-9 ? centroid(compressed) : { x: 0, y: 0 };
@@ -113,7 +114,11 @@ const cases = [
   },
 ];
 
-describe("sectionResponse 가 기존 1축 적분과 동일하다", () => {
+/**
+ * referenceUniaxial 은 등가직사각형 블록을 손으로 구현한 것이므로 method 를 명시한다.
+ * (bridge_lsd 의 기본 적분은 파이버로 바뀌었다 — designCodes.defaultIntegration 참조)
+ */
+describe("sectionResponse 가 기존 1축 적분과 동일하다 (등가블록 경로)", () => {
   for (const testCase of cases) {
     for (const designCode of ["kds_strength", "bridge_lsd"] as DesignCodeId[]) {
       for (const tie of ["tie", "spiral"] as TransverseReinforcement[]) {
@@ -134,7 +139,11 @@ describe("sectionResponse 가 기존 1축 적분과 동일하다", () => {
               testCase.materials,
               designCodes[designCode],
               { theta: UNIAXIAL_THETA, c },
-              { transverseReinforcement: tie, reference: centroid(testCase.polygon) },
+              {
+                transverseReinforcement: tie,
+                reference: centroid(testCase.polygon),
+                method: "equivalent_block",
+              },
             );
 
             expect(actual.pn, `pn @c=${c}`).toBeCloseTo(expected.pn, 9);

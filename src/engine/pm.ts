@@ -27,7 +27,8 @@ export function computePM(section: SectionModel, materials: MaterialSet, options
   // 모멘트 기준점은 소성중심(KDS 14 20 20). 한 번만 구해 전 계산점에 공유한다.
   const integration: IntegrationOptions = {
     transverseReinforcement: options.transverseReinforcement ?? "tie",
-    reference: plasticCentroid(model, materials, code),
+    reference: plasticCentroid(model, materials, code, code.defaultIntegration),
+    method: code.defaultIntegration,
   };
   const materialFactor = code.designBasis === "material_factor" ? 1 : 0;
   const sweepCount = Math.max(12, options.points);

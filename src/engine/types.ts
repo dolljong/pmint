@@ -2,6 +2,14 @@ export type DesignCodeId = "kds_strength" | "bridge_lsd";
 
 export type ShapeMode = "free" | "rectangle" | "circle";
 
+/**
+ * 콘크리트 압축영역 적분 방식.
+ *
+ * section.ts 가 아니라 여기 두는 이유: designCodes.ts 가 설계법별 기본값을 선언하는데,
+ * section.ts 는 designCodes.ts 를 import 하므로 반대 방향 import 는 순환이 된다.
+ */
+export type IntegrationMethod = "equivalent_block" | "fiber";
+
 export type TransverseReinforcement = "tie" | "spiral";
 
 export interface Point {

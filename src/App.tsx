@@ -16,11 +16,19 @@ import {
   validateRings,
 } from "./engine/geometry";
 import { generateCircleRebars, generateRectangleRebars, type RectRebarLayer } from "./engine/rebarLayout";
-import { computeSurface, momentContour, type InteractionSurface } from "./engine/surface";
+import { computeSurface, meridianAtTheta, momentContour, type InteractionSurface } from "./engine/surface";
 import { checkDemand, type ColumnGeometry, type DemandCheck, type DemandInput } from "./engine/demand";
 import { designCodes } from "./engine/designCodes";
-import type { IntegrationMethod } from "./engine/section";
-import type { DesignCodeId, MaterialSet, Point, Rebar, Ring, ShapeMode, TransverseReinforcement } from "./engine/types";
+import type {
+  DesignCodeId,
+  IntegrationMethod,
+  MaterialSet,
+  Point,
+  Rebar,
+  Ring,
+  ShapeMode,
+  TransverseReinforcement,
+} from "./engine/types";
 import { buildReport, fmt, radToDeg, sci, type ReportColumn } from "./report";
 
 interface ColumnCondition extends ColumnGeometry {
@@ -95,7 +103,7 @@ export default function App() {
 
   const [showDesign, setShowDesign] = useState(true);
   const [showSimplified, setShowSimplified] = useState(false);
-  const [method, setMethod] = useState<IntegrationMethod>("equivalent_block");
+  const [method, setMethod] = useState<IntegrationMethod>(designCodes.kds_strength.defaultIntegration);
   const [taperReduction, setTaperReduction] = useState(false);
   const [reportVisible, setReportVisible] = useState(false);
   const [selectedDemandId, setSelectedDemandId] = useState<string | undefined>("D1");
@@ -144,6 +152,16 @@ export default function App() {
   }, [surface, materials, column, demands, rings, rebars, showSimplified]);
 
   // ---- 편집 액션 ----------------------------------------------------------
+  /**
+   * 설계법을 바꾸면 적분 방식도 그 설계법의 기본값으로 되돌린다.
+   * 한계상태설계법은 포물선-직선(파이버)이 기본이다 — 등가블록 계수는 폭이 일정한
+   * 압축영역 전제라 2축/고강도에서 압축력을 과대평가한다.
+   */
+  const changeDesignCode = (id: DesignCodeId) => {
+    setDesignCode(id);
+    setMethod(designCodes[id].defaultIntegration);
+  };
+
   const updateRingPoint = (ringId: string, index: number, patch: Partial<Point>) => {
     setShapeMode("free");
     setRings((items) =>
@@ -206,7 +224,7 @@ export default function App() {
     setRings(rectangleRings(1100, 1100));
     setMaterials(b5iMaterials);
     setColumn(b5iColumnCondition);
-    setDesignCode("kds_strength");
+    changeDesignCode("kds_strength");
     setRebars(generateRectangleRebars(1100, 1100, b5iRectRebarLayers));
     setDemands(b5iDemands);
     setSelectedDemandId("D1");
@@ -220,7 +238,7 @@ export default function App() {
     setRings(rectangleRings(3000, 4000, 400));
     setMaterials({ concrete: { fc: 30, ecu: 0.0033 }, steel: { fy: 400, es: 200000 } });
     setColumn({ title: "중공 교각", cover: 100, lu: 12000, kx: 2, ky: 2, tieType: "띠 철근" });
-    setDesignCode("bridge_lsd");
+    changeDesignCode("bridge_lsd");
     setRebars(generateRectangleRebars(3000, 4000, hollowPierRebarLayers));
     setDemands([
       { id: "D1", label: "지진 X+Y", pu: 22000, muxNs: 9000, muxS: 0, muyNs: 6500, muyS: 0, betaDx: 0, betaDy: 0 },
@@ -233,7 +251,7 @@ export default function App() {
     setRings(defaultRings);
     setRebars(defaultRebars);
     setMaterials(defaultMaterials);
-    setDesignCode("kds_strength");
+    changeDesignCode("kds_strength");
     setShapeMode("rectangle");
     setRect({ width: 400, height: 600, wall: 0 });
     setRectRebarLayers(defaultRectRebarLayers);
@@ -373,7 +391,7 @@ export default function App() {
             <label>fy(MPa)<input type="number" value={materials.steel.fy} onChange={(e) => setMaterials({ ...materials, steel: { ...materials.steel, fy: readNumber(e.target.value) } })} /></label>
             <label>Es(MPa)<input type="number" value={materials.steel.es} onChange={(e) => setMaterials({ ...materials, steel: { ...materials.steel, es: readNumber(e.target.value) } })} /></label>
           </div>
-          <select value={designCode} onChange={(e) => setDesignCode(e.target.value as DesignCodeId)}>
+          <select value={designCode} onChange={(e) => changeDesignCode(e.target.value as DesignCodeId)}>
             {Object.values(designCodes).map((code) => <option key={code.id} value={code.id}>{code.label}</option>)}
           </select>
         </section>
@@ -558,9 +576,7 @@ function SectionSvg({
     const { sMax } = sectionProjectionRange(rings, nx, ny);
     if (!Number.isFinite(sMax)) return undefined;
     const code = surface?.code;
-    const beta = code && surface
-      ? code.stressBlock(surface.materials.concrete.fc / code.materialFactors.concrete).beta
-      : 0.8;
+    const beta = code && surface ? code.stressBlock(surface.materials.concrete.fc).beta : 0.8;
     const blockS = sMax - beta * c;
     return {
       naS: sMax - c,
@@ -789,11 +805,17 @@ function SliceSvg({
 }) {
   const W = 820;
   const H = 380;
-  if (!surface) return <svg className="pm-svg" viewBox={`0 0 ${W} ${H}`} />;
 
-  const meridian = surface.meridians.reduce((best, m) =>
-    angleGap(m[0].theta, theta) < angleGap(best[0].theta, theta) ? m : best,
+  // 곡선은 미리 계산된 72방향 중 가장 가까운 것을 고르지 않고, 검토가 수렴시킨
+  // **바로 그 θ** 에서 즉석 계산한다. 격자에 스냅하면 사용률 1.0 인 하중점이
+  // 곡선 안쪽에 찍혀 여유가 있는 것처럼 보인다 (engine/surface.ts meridianAtTheta 주석).
+  // tailSteps: 자오선 c 상한(1.8*h)이 Pn0 에 못 미쳐 고축력 하중점이 곡선 끝 위로
+  // 떠 버리는 것을 막는다 (surface.ts MeridianOptions 주석).
+  const meridian = useMemo(
+    () => (surface ? meridianAtTheta(surface, theta, { tailSteps: 14 }) : []),
+    [surface, theta],
   );
+  if (!surface || meridian.length === 0) return <svg className="pm-svg" viewBox={`0 0 ${W} ${H}`} />;
 
   const nominal = meridian.map((p) => ({ m: p.mn, p: p.pn }));
   const design = meridian.map((p) => ({ m: p.md, p: p.pd }));
@@ -1004,12 +1026,6 @@ function ringsToPath(rings: Ring[]): string {
 
 function tieTypeToTransverse(tieType: string): TransverseReinforcement {
   return tieType === "나선 철근" ? "spiral" : "tie";
-}
-
-function angleGap(a: number, b: number): number {
-  const twoPi = Math.PI * 2;
-  const d = Math.abs((((a - b) % twoPi) + twoPi) % twoPi);
-  return Math.min(d, twoPi - d);
 }
 
 function setRectRebarLayerCount(

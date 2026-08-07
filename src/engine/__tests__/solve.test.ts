@@ -1,7 +1,13 @@
 import { describe, expect, it } from "vitest";
 import { circleRings, rectangleRings } from "../geometry";
 import { generateCircleRebars, generateRectangleRebars } from "../rebarLayout";
-import { computeSurface, type InteractionSurface } from "../surface";
+import {
+  angleDistance,
+  computeSurface,
+  interpolateAtAxial,
+  meridianAtTheta,
+  type InteractionSurface,
+} from "../surface";
 import { capacityAt, solveAtTheta } from "../solve";
 import { checkDemand, prepareDemand, type ColumnGeometry, type DemandInput } from "../demand";
 import type { DesignCodeId, MaterialSet, SectionModel } from "../types";
@@ -99,6 +105,111 @@ describe("왕복 검증: 곡면 위 점 -> ratio = 1", () => {
       checked += 1;
     }
     expect(checked).toBeGreaterThan(3);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// 고축력 폴백: 자오선 c 상한(1.8*h)을 넘는 축력
+// ---------------------------------------------------------------------------
+describe("자오선이 못 닿는 고축력 구간", () => {
+  // 800x1000 fck80 SD600 / 한계상태설계법 — RcMania·DMbix 대조에 쓴 단면.
+  // Pn0 = 44278 kN 인데 자오선 최대 축력은 38655 kN 에서 끊긴다.
+  const highAxial = computeSurface(
+    {
+      rings: rectangleRings(800, 1000),
+      rebars: generateRectangleRebars(800, 1000, [
+        { id: "L1", dc: 90, diameter: 29, top: 7, right: 9, bottom: 7, left: 9 },
+      ]),
+    },
+    { concrete: { fc: 80, ecu: 0.0029, ec: 37490 }, steel: { fy: 600, es: 200000 } },
+    { designCode: "bridge_lsd", thetaSteps: 72, cSteps: 60, transverseReinforcement: "tie" },
+  )!;
+
+  const meridianMax = Math.max(...highAxial.meridians.flat().map((p) => p.pdRaw));
+
+  it("전제: 자오선 최대 축력이 Pn0 보다 낮다 (폴백이 실제로 필요한 상황)", () => {
+    expect(meridianMax).toBeLessThan(highAxial.pn0);
+  });
+
+  it("자오선 상한과 Pn0 사이의 축력에서도 해를 찾는다", () => {
+    // LC1 (Pu = 38872.7 kN) 이 정확히 이 구간에 있다.
+    for (const pu of [38872.7, meridianMax * 1.02, (meridianMax + highAxial.pn0) / 2]) {
+      const alphaE = Math.atan2(68.848, 163.268);
+      const found = capacityAt(highAxial, pu, alphaE, true);
+      expect(found, `pu=${pu}`).toBeDefined();
+      expect(Math.abs(found!.pd - pu) / pu, `축력 수렴 pu=${pu}`).toBeLessThan(1e-6);
+      // 편심 방향도 목표에 맞아야 한다 (θ != alpha_e 이므로 방향 수렴이 별도 조건)
+      expect(Math.abs(found!.alphaE - alphaE), `alpha_e pu=${pu}`).toBeLessThan(1e-3);
+      expect(found!.md).toBeGreaterThan(0);
+    }
+  });
+
+  it("모멘트가 축력에 대해 단조 감소한다 (곡면 상단이 이어진다)", () => {
+    const alphaE = Math.atan2(68.848, 163.268);
+    let previous = Number.POSITIVE_INFINITY;
+    for (const pu of [36000, 38000, 38872.7, 40000, 42000]) {
+      const found = capacityAt(highAxial, pu, alphaE, true);
+      expect(found, `pu=${pu}`).toBeDefined();
+      expect(found!.md, `pu=${pu}`).toBeLessThan(previous);
+      previous = found!.md;
+    }
+  });
+
+  it("Pn0 를 넘는 축력은 여전히 해가 없다", () => {
+    expect(capacityAt(highAxial, highAxial.pn0 * 1.2, Math.PI / 4, true)).toBeUndefined();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// 화면 곡선(App.tsx SliceSvg)과 검토 결과의 정합
+// ---------------------------------------------------------------------------
+describe("하중점은 그려지는 곡선 위에 있다", () => {
+  const s = computeSurface(
+    {
+      rings: rectangleRings(800, 1000),
+      rebars: generateRectangleRebars(800, 1000, [
+        { id: "L1", dc: 90, diameter: 29, top: 7, right: 9, bottom: 7, left: 9 },
+      ]),
+    },
+    { concrete: { fc: 80, ecu: 0.0029, ec: 37490 }, steel: { fy: 600, es: 200000 } },
+    { designCode: "bridge_lsd", thetaSteps: 72, cSteps: 60, transverseReinforcement: "tie" },
+  )!;
+
+  // RcMania/DMbix 대조 케이스. LC1 은 자오선 c 상한을 넘는 고축력이다.
+  const cases = [
+    { name: "LC1", pu: 38872.7, mx: 68.848, my: 163.268 },
+    { name: "LC2", pu: 22561.2, mx: 31.593, my: 663.033 },
+    { name: "대각 45도", pu: 20000, mx: 2000, my: 2000 },
+  ];
+
+  for (const lc of cases) {
+    it(`${lc.name}: 곡선 위 P=Pu 지점이 검토 |Md| 와 일치한다`, () => {
+      const alphaE = Math.atan2(lc.mx, lc.my);
+      const capacity = capacityAt(s, lc.pu, alphaE, true);
+      expect(capacity, "검토 해").toBeDefined();
+
+      // App.tsx SliceSvg 가 그리는 바로 그 곡선
+      const curve = meridianAtTheta(s, capacity!.theta, { tailSteps: 14 });
+      const hit = interpolateAtAxial(curve, lc.pu, true);
+      expect(hit, "곡선이 Pu 까지 닿는다").toBeDefined();
+
+      const drawn = Math.hypot(hit!.mx, hit!.my);
+      // 남는 오차는 c 분할 사이의 선형보간뿐이다.
+      expect(Math.abs(drawn / capacity!.md - 1), `|Md| 곡선=${drawn} 검토=${capacity!.md}`).toBeLessThan(5e-3);
+    });
+  }
+
+  it("격자 자오선으로 그리면 어긋난다 (수정 전 동작의 회귀 방지)", () => {
+    const lc = cases[1]; // LC2: theta 2.02deg, 가장 가까운 격자는 0deg
+    const alphaE = Math.atan2(lc.mx, lc.my);
+    const capacity = capacityAt(s, lc.pu, alphaE, true)!;
+    const grid = s.meridians.reduce((best, m) =>
+      angleDistance(m[0].theta, capacity.theta) < angleDistance(best[0].theta, capacity.theta) ? m : best,
+    );
+    const gridHit = interpolateAtAxial(grid, lc.pu, true)!;
+    const gridDrawn = Math.hypot(gridHit.mx, gridHit.my);
+    // 격자 스냅은 1% 넘게 벌어진다 -> 정확한 theta 로 그려야 하는 이유
+    expect(Math.abs(gridDrawn / capacity.md - 1)).toBeGreaterThan(1e-2);
   });
 });
 

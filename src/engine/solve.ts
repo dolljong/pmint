@@ -69,6 +69,20 @@ export function capacityAt(
     if (Math.hypot(hit.mx, hit.my) < 1e-9) continue; // 순압축 근처: 방향 정보 없음
     coarse.push({ theta: surface.thetas[i], alphaE: Math.atan2(hit.mx, hit.my) });
   }
+
+  // ★ 고축력 폴백.
+  //   자오선(surface.ts buildMeridian)은 c 를 1.8·h_θ 까지만 훑으므로 순압축 근처의
+  //   축력에는 닿지 못한다. 예: 800x1000 fck80 한계상태설계법 단면에서
+  //   자오선 최대 축력 38655 kN < Pn0 44278 kN 이라 그 사이가 통째로 빈다.
+  //   그럴 때 꼬리를 연장해 브래킷용 표를 다시 만든다.
+  //   (표가 **부분적으로만** 비는 경우는 폴백이 필요 없다 — 남은 점들로 브래킷을 잡고
+  //    refineTheta 가 solveAtTheta 로 정밀화하므로 그 자체가 전 범위를 본다.)
+  if (coarse.length === 0) {
+    for (const theta of surface.thetas) {
+      const alpha = tailAlphaE(surface, theta, pu, useDesign);
+      if (alpha !== undefined) coarse.push({ theta, alphaE: alpha });
+    }
+  }
   if (coarse.length === 0) return undefined;
 
   // --- 부호변화 구간을 모두 수집 -------------------------------------------
@@ -107,6 +121,48 @@ export function capacityAt(
   }
 
   return candidates.reduce((best, item) => (item.md > best.md ? item : best));
+}
+
+/**
+ * 자오선 꼬리 연장: c 를 순압축 쪽으로 더 밀어 α_e(θ) 를 얻는다.
+ *
+ * 여기서 만드는 값은 **브래킷용 근사**다. 실제 해는 refineTheta 가 solveAtTheta 로
+ * 정밀화하므로 몇 점 선형보간이면 충분하다. 대신 θ 를 솎아내지 않고 72방향을 그대로
+ * 유지해 브래킷 해상도를 잃지 않는다 — θ 마다 solveAtTheta(≈128회 적분)를 부르는 것보다
+ * 훨씬 싸다(평균 2~3회 적분).
+ */
+const TAIL_FACTORS = [1.8, 2.6, 4, 7, 14, 40];
+
+function tailAlphaE(
+  surface: InteractionSurface,
+  theta: number,
+  pu: number,
+  useDesign: boolean,
+): number | undefined {
+  const { nx, ny } = axisNormal(theta);
+  const { sMin, sMax } = sectionProjectionRange(surface.section.rings, nx, ny);
+  const depth = sMax - sMin;
+  if (!Number.isFinite(depth) || depth <= 0) return undefined;
+
+  let previous: { p: number; mx: number; my: number } | undefined;
+  for (const factor of TAIL_FACTORS) {
+    const response = evaluate(surface, theta, factor * depth);
+    const current = {
+      p: useDesign ? response.pd : response.pn,
+      mx: useDesign ? response.mdx : response.mnx,
+      my: useDesign ? response.mdy : response.mny,
+    };
+    if (previous && pu >= Math.min(previous.p, current.p) && pu <= Math.max(previous.p, current.p)) {
+      const span = current.p - previous.p;
+      const t = Math.abs(span) < 1e-12 ? 0 : (pu - previous.p) / span;
+      const mx = previous.mx + (current.mx - previous.mx) * t;
+      const my = previous.my + (current.my - previous.my) * t;
+      if (Math.hypot(mx, my) < 1e-9) return undefined; // 순압축: 방향 정보 없음
+      return Math.atan2(mx, my);
+    }
+    previous = current;
+  }
+  return undefined;
 }
 
 /** outer loop: θ 구간을 이분해 α_e 를 목표에 맞춘다. */

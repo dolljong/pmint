@@ -8,9 +8,16 @@ import {
   sectionCentroid,
   sectionProjectionRange,
 } from "./geometry";
-import { parabolicRectangularLaw, parabolicRectangularStress } from "./concreteLaw";
+import { parabolicPeakStress, parabolicRectangularLaw, parabolicRectangularStress } from "./concreteLaw";
 import type { DesignCodeStrategy } from "./designCodes";
-import type { MaterialSet, Point, Ring, SectionModel, TransverseReinforcement } from "./types";
+import type {
+  IntegrationMethod,
+  MaterialSet,
+  Point,
+  Ring,
+  SectionModel,
+  TransverseReinforcement,
+} from "./types";
 
 /**
  * 단면 적분 프리미티브.
@@ -37,13 +44,13 @@ export interface StrainState {
   c: number;
 }
 
-export type IntegrationMethod = "equivalent_block" | "fiber";
+export type { IntegrationMethod };
 
 export interface IntegrationOptions {
   transverseReinforcement: TransverseReinforcement;
   /** 모멘트 기준점. 미지정이면 소성중심. */
   reference?: Point;
-  /** 콘크리트 압축영역 적분 방식. 기본 등가블록. */
+  /** 콘크리트 압축영역 적분 방식. 미지정이면 설계법 기본값(code.defaultIntegration). */
   method?: IntegrationMethod;
   /** fiber 방식의 밴드 수. 기본 60. 오차 O(1/N^2). */
   fiberBands?: number;
@@ -69,15 +76,33 @@ export interface IntegrationOptions {
  * 대칭 단면 + 대칭 배근이면 기하 도심과 일치하므로 1축 기존 결과는 변하지 않는다.
  * 비대칭 배근에서만 값이 달라지며, 그것이 올바른 방향이다.
  */
+/**
+ * 콘크리트의 기준 압축응력. 적분 방식에 따라 다르다.
+ *
+ *   등가블록  alpha_cc * eta(fck) * fcd    eta = 포물선을 균일블록으로 치환하는 형상 보정
+ *   파이버    alpha_cc * fcd               eta 를 곱하면 형상 보정이 이중 적용된다
+ *
+ * 이 값 하나를 (1) 등가블록 응력, (2) 파이버 정점응력, (3) 압축철근의 콘크리트 치환 공제,
+ * (4) 순압축강도, (5) 소성중심 가중치에 **모두** 써야 c -> ∞ 극한이 곡면과 매끄럽게 이어진다.
+ */
+export function referenceConcreteStress(
+  materials: MaterialSet,
+  code: DesignCodeStrategy,
+  method: IntegrationMethod,
+): number {
+  const fcd = materials.concrete.fc / code.materialFactors.concrete;
+  // eta / beta1 표는 fck 의 함수다. fcd 로 조회하면 고강도에서 eta 가 과대평가된다.
+  return method === "fiber" ? parabolicPeakStress(fcd) : code.stressBlock(materials.concrete.fc).alpha * fcd;
+}
+
 export function plasticCentroid(
   section: SectionModel,
   materials: MaterialSet,
   code: DesignCodeStrategy,
+  method: IntegrationMethod = code.defaultIntegration,
 ): Point {
-  const fc = materials.concrete.fc / code.materialFactors.concrete;
   const fy = materials.steel.fy / code.materialFactors.steel;
-  const block = code.stressBlock(fc);
-  const concreteStress = block.alpha * fc;
+  const concreteStress = referenceConcreteStress(materials, code, method);
 
   const area = sectionArea(section.rings);
   const geo = sectionCentroid(section.rings);
@@ -172,13 +197,13 @@ export function sectionResponse(
   const rings = section.rings;
   const { nx, ny } = axisNormal(state.theta);
   const { sMin, sMax } = sectionProjectionRange(rings, nx, ny);
-  const fc = materials.concrete.fc / code.materialFactors.concrete;
   const fy = materials.steel.fy / code.materialFactors.steel;
-  const block = code.stressBlock(fc);
-  const reference = options.reference ?? plasticCentroid(section, materials, code);
+  const block = code.stressBlock(materials.concrete.fc);
+  const method = options.method ?? code.defaultIntegration;
+  const concreteStress = referenceConcreteStress(materials, code, method);
+  const reference = options.reference ?? plasticCentroid(section, materials, code, method);
 
   const finiteC = Number.isFinite(state.c);
-  const method = options.method ?? "equivalent_block";
   const a = finiteC ? block.beta * state.c : Number.POSITIVE_INFINITY;
   const blockLimit = finiteC ? sMax - a : Number.NEGATIVE_INFINITY;
 
@@ -195,10 +220,8 @@ export function sectionResponse(
           ny,
           sMax,
           state.c,
-          // 정점응력은 등가블록과 **같은** α·fcd 를 쓴다.
-          // 0.85 는 지속하중/치수효과 보정이며 응력법칙의 형상과 무관하게 적용된다.
-          // 이걸 fcd 로 두면 두 엔진이 1/0.85 = 17.6% 어긋난다.
-          block.alpha * fc,
+          // 정점응력 = alpha_cc · fcd. 등가블록의 eta 는 곱하지 않는다(referenceConcreteStress 참조).
+          concreteStress,
           materials.concrete.fc,
           reference,
           options.fiberBands ?? 60,
@@ -207,7 +230,7 @@ export function sectionResponse(
           compressed,
           concArea,
           concCentroid,
-          block.alpha * fc,
+          concreteStress,
           reference,
           options.taperReduction === true && finiteC
             ? isTaperedTowardExtremeFibre(compressed, nx, ny)
@@ -238,7 +261,7 @@ export function sectionResponse(
     // 압축측 철근은 등가 콘크리트 응력과 중복되는 면적을 공제한다.
     // (docs/compression-steel-stress-block-review.md 의 판단: 등가블록 내부 여부가 아니라
     //  중립축 기준 압축측 여부로 판정)
-    const netStress = compression && stress > 0 ? stress - block.alpha * fc : stress;
+    const netStress = compression && stress > 0 ? stress - concreteStress : stress;
     const area = rebarArea(bar.diameter);
     const force = (netStress * area) / 1000;
     const mx = (force * (bar.y - reference.y)) / 1000;
@@ -303,13 +326,13 @@ export function pureCompression(
   options: IntegrationOptions,
 ): SectionResponse {
   const rings = section.rings;
-  const fc = materials.concrete.fc / code.materialFactors.concrete;
   const fy = materials.steel.fy / code.materialFactors.steel;
-  const block = code.stressBlock(fc);
-  const reference = options.reference ?? plasticCentroid(section, materials, code);
+  const method = options.method ?? code.defaultIntegration;
+  const concreteStress = referenceConcreteStress(materials, code, method);
+  const reference = options.reference ?? plasticCentroid(section, materials, code, method);
   const area = sectionArea(rings);
   const concCentroid = sectionCentroid(rings);
-  const concreteForce = (block.alpha * fc * area) / 1000;
+  const concreteForce = (concreteStress * area) / 1000;
 
   let pn = concreteForce;
   let mnx = (concreteForce * (concCentroid.y - reference.y)) / 1000;
@@ -320,7 +343,7 @@ export function pureCompression(
   const bars: BarResponse[] = [];
 
   for (const bar of section.rebars) {
-    const netStress = fy - block.alpha * fc;
+    const netStress = fy - concreteStress;
     const barArea = rebarArea(bar.diameter);
     const force = (netStress * barArea) / 1000;
     const mx = (force * (bar.y - reference.y)) / 1000;

@@ -2,7 +2,14 @@ import { describe, expect, it } from "vitest";
 import { circleRings, rectangleRings } from "../geometry";
 import { generateCircleRebars, generateRectangleRebars } from "../rebarLayout";
 import { computePM } from "../pm";
-import { angleDistance, computeSurface, meridianAt, momentContour, type InteractionSurface } from "../surface";
+import {
+  angleDistance,
+  computeSurface,
+  meridianAt,
+  meridianAtTheta,
+  momentContour,
+  type InteractionSurface,
+} from "../surface";
 import type { MaterialSet, Rebar, SectionModel } from "../types";
 
 const materials: MaterialSet = {
@@ -115,6 +122,51 @@ describe("불변식: theta=90deg 자오선 == 1축 곡선", () => {
       expect(meridian[i].mny).toBeCloseTo(0, 9);
       expect(meridian[i].phi).toBeCloseTo(uniaxial[i].phi, 12);
     }
+  });
+
+  it("meridianAtTheta 는 격자 위에서 기존 자오선과 같다", () => {
+    for (const index of [0, 7, 18, 41]) {
+      const grid = surface.meridians[index];
+      const exact = meridianAtTheta(surface, surface.thetas[index]);
+      expect(exact.length).toBe(grid.length);
+      for (let i = 0; i < grid.length; i += 1) {
+        expect(exact[i].c).toBeCloseTo(grid[i].c, 9);
+        expect(exact[i].pn).toBeCloseTo(grid[i].pn, 9);
+        expect(exact[i].mnx).toBeCloseTo(grid[i].mnx, 9);
+        expect(exact[i].mny).toBeCloseTo(grid[i].mny, 9);
+      }
+    }
+  });
+
+  it("meridianAtTheta 는 격자 사이 각도에서 그 각도의 값을 낸다", () => {
+    // 격자(5도)의 한가운데. 양옆 자오선과 달라야 하고, 그 사이 값이어야 한다.
+    const between = (surface.thetas[7] + surface.thetas[8]) / 2;
+    const exact = meridianAtTheta(surface, between);
+    for (const point of exact) expect(point.theta).toBeCloseTo(between, 12);
+    const mid = Math.floor(exact.length / 2);
+    const lo = surface.meridians[7][mid].mn;
+    const hi = surface.meridians[8][mid].mn;
+    expect(exact[mid].mn).toBeGreaterThan(Math.min(lo, hi));
+    expect(exact[mid].mn).toBeLessThan(Math.max(lo, hi));
+  });
+
+  it("tailSteps 를 주면 곡선이 순압축까지 이어진다", () => {
+    const plain = meridianAtTheta(surface, 0.4);
+    const extended = meridianAtTheta(surface, 0.4, { tailSteps: 14 });
+    expect(extended.length).toBe(plain.length + 14);
+    // 앞부분은 그대로
+    for (let i = 0; i < plain.length; i += 1) expect(extended[i].c).toBeCloseTo(plain[i].c, 9);
+    // 꼬리는 c 가 단조 증가하고 축력이 Pn0 로 수렴한다.
+    // 등가블록은 a = beta1*c 가 단면 깊이를 넘는 순간 Pn 이 **정확히** Pn0 에서 평탄해지므로
+    // 증가가 아니라 비감소로 본다.
+    for (let i = plain.length; i < extended.length; i += 1) {
+      expect(extended[i].c).toBeGreaterThan(extended[i - 1].c);
+      expect(extended[i].pn).toBeGreaterThanOrEqual(extended[i - 1].pn);
+    }
+    const top = extended[extended.length - 1];
+    expect(top.pn).toBeGreaterThan(plain[plain.length - 1].pn);
+    expect(top.pn / surface.pn0).toBeGreaterThan(0.99);
+    expect(top.pn).toBeLessThanOrEqual(surface.pn0 * 1.0001);
   });
 
   it("theta=0deg 자오선은 축을 바꾼 1축 곡선이다", () => {

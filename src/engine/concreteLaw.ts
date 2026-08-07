@@ -23,15 +23,39 @@ export interface ParabolicRectangularLaw {
 }
 
 /**
- * KDS / EC2 계열의 포물선-직선 계수. fck 에 따라 변한다.
+ * 포물선-직선 곡선의 정점응력 계수 alpha_cc.
+ *
+ * 지속하중/치수효과 보정이며 **곡선의 형상과 무관하게** 곱해진다.
+ * 등가블록의 eta 는 여기 곱하지 않는다 — eta 는 포물선을 균일 블록으로 치환할 때
+ * 생기는 오차를 메우는 형상 보정계수라, 포물선 자체에 적용하면 이중 감소가 된다.
+ * (fck=80 기준 eta=0.87 이므로 13% 과소평가된다.)
+ */
+export const ALPHA_CC = 0.85;
+
+/** 포물선-직선 곡선의 정점응력. fcd 는 재료계수/저항계수를 이미 반영한 값. */
+export function parabolicPeakStress(fcd: number): number {
+  return ALPHA_CC * fcd;
+}
+
+/**
+ * KDS 14 20 20 4.1.1 / KDS 24 14 21 의 포물선-직선 계수. fck 에 따라 변한다.
  * fck <= 40MPa 이면 n=2, ec0=0.002, ecu=0.0033 의 고전적 값.
+ *
+ *   n   = 1.2 + 1.5[(100-fck)/60]^4 <= 2.0
+ *   ec0 = 0.002  + (fck-40)/100000
+ *   ecu = 0.0033 - (fck-40)/100000
+ *
+ * 코드 표와 대조:
+ *   fck  50 -> 1.92 / 0.0021 / 0.0032      fck  70 -> 1.29 / 0.0023 / 0.0030
+ *   fck  60 -> 1.50 / 0.0022 / 0.0031      fck  80 -> 1.22 / 0.0024 / 0.0029
+ *                                          fck  90 -> 1.20 / 0.0025 / 0.0028
  */
 export function parabolicRectangularLaw(fck: number): ParabolicRectangularLaw {
   if (fck <= 40) return { ec0: 0.002, ecu: 0.0033, n: 2 };
   return {
     n: Math.min(2, 1.2 + 1.5 * ((100 - fck) / 60) ** 4),
-    ec0: (0.002 + (fck - 40) * 0.0000025),
-    ecu: (0.0033 - (fck - 40) * 0.0000125),
+    ec0: 0.002 + (fck - 40) / 100000,
+    ecu: 0.0033 - (fck - 40) / 100000,
   };
 }
 
