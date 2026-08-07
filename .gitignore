@@ -3,3 +3,6 @@ dist/
 *.tsbuildinfo
 *.log
 vite-dev.err
+
+# 검토 대조용 자료(계산서 zip 등). 저장소에 넣지 않는다.
+참고/
