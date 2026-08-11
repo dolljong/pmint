@@ -834,6 +834,8 @@ h2 {
 .check-card.ok { border-left: 4px solid #2f7d54; }
 .check-card.ng { border-left: 4px solid #a83232; }
 .check-card.selected { box-shadow: 0 0 0 2px rgba(33, 97, 116, 0.35); }
+/* 최소편심 파생 케이스 — 사용자가 입력한 케이스가 아님을 점선 테두리로 구분한다. */
+.check-card.derived { border-style: dashed; background: rgba(33, 97, 116, 0.04); }
 .check-card .ratio { font-variant-numeric: tabular-nums; font-weight: 700; }
 .check-card.ok .verdict { color: #2f7d54; font-weight: 700; }
 .check-card.ng .verdict { color: #a83232; font-weight: 700; }

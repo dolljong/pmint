@@ -7,7 +7,14 @@ import {
   sectionSecondMoments,
   signedArea,
 } from "./engine/geometry";
-import { checkDemand, concreteElasticModulus, type ColumnGeometry, type DemandInput } from "./engine/demand";
+import {
+  checkDemand,
+  concreteElasticModulus,
+  expandDemands,
+  MIN_ECCENTRICITY_ID_SUFFIX,
+  type ColumnGeometry,
+  type DemandInput,
+} from "./engine/demand";
 import { parabolicRectangularLaw } from "./engine/concreteLaw";
 import { breslerReciprocal, ec2BiaxialCheck } from "./engine/simplified";
 import { capacityAt } from "./engine/solve";
@@ -63,7 +70,9 @@ export function buildReport(input: ReportInput): string {
       `         -. ${index + 1}단 철근 : H${fmt(group.diameter)} x ${String(group.count).padStart(3, " ")}ea = ${fmt(group.area)} mm2  (dc = ${fmt(group.dc)} mm)`,
   );
 
-  const demandSections = demands.map((demand, index) =>
+  // 한계상태설계법이면 최소편심 파생 케이스가 원 케이스 뒤에 끼어든다.
+  const reviewedDemands = expandDemands(surface, materials, column, demands);
+  const demandSections = reviewedDemands.map((demand, index) =>
     buildDemandReview(index + 1, demand, input),
   );
 
@@ -142,6 +151,8 @@ export function buildReport(input: ReportInput): string {
           "",
           "       [우발편심 처리] 한계상태설계법 -> 최소모멘트 검토",
           "        e0 = max(h/30, 20mm) 로 작용모멘트를 축별 하한 처리한다 (EC2 6.1(4)).",
+          "        h 는 그 모멘트가 도는 방향의 단면 치수다 (Mux <-> y방향 깊이, Muy <-> x방향 폭).",
+          "        입력 케이스는 그대로 두고, 하한이 지배하면 최소편심 케이스를 **추가**해 둘 다 검토한다.",
           "        강도곡면 자체는 수정하지 않으며, 재료계수만 반영한 순수 단면저항을 나타낸다.",
         ]),
     "",
@@ -204,17 +215,35 @@ function buildDemandReview(index: number, demand: DemandInput, input: ReportInpu
       `            Pu = ${fmt(demand.pu)} kN ${demand.pu <= surface.axialCap ? "<=" : ">"} 상한  ->  ${demand.pu <= surface.axialCap ? "O.K" : "N.G (축력 상한 초과)"}`,
     );
   } else {
+    const mark = (governs: boolean) => (governs ? "[지배]" : "[여유]");
     lines.push(
-      "            한계상태설계법 -> 작용모멘트를 축별 최소모멘트로 하한 처리한다.",
-      `            e0y (Mux 짝) = ${fmt(d.e0y ?? 0)} mm  ->  Mmin,x = ${fmt(d.minMomentX)} kN-m  ${d.minMomentGovernsX ? "[지배]" : ""}`,
-      `            e0x (Muy 짝) = ${fmt(d.e0x ?? 0)} mm  ->  Mmin,y = ${fmt(d.minMomentY)} kN-m  ${d.minMomentGovernsY ? "[지배]" : ""}`,
-      `            검토 모멘트   : Mux,chk = ${pad(fmt(d.mux), 10)} kN-m,  Muy,chk = ${pad(fmt(d.muy), 10)} kN-m`,
+      "            한계상태설계법 -> 축별 최소모멘트 M >= Pu*e0 을 검토한다.",
+      `            e0y (Mux 짝) = ${fmt(d.e0y ?? 0)} mm  ->  Mmin,x = ${fmt(d.minMomentX)} kN-m  ${mark(d.minMomentGovernsX)}`,
+      `            e0x (Muy 짝) = ${fmt(d.e0x ?? 0)} mm  ->  Mmin,y = ${fmt(d.minMomentY)} kN-m  ${mark(d.minMomentGovernsY)}`,
     );
-    const rotation = radToDeg(d.alphaE - d.alphaEBeforeMinMoment);
-    if (Math.abs(rotation) > 1e-6) {
+
+    if (d.appliesMinMoment) {
       lines.push(
-        `            ※ 하한 처리로 편심 방향이 ${fmt(radToDeg(d.alphaEBeforeMinMoment))} deg -> ${fmt(radToDeg(d.alphaE))} deg 로 ${fmt(Math.abs(rotation))} deg 회전하였다.`,
-        "               (α_e 는 반드시 하한 처리 후에 산정해야 한다)",
+        `            이 케이스는 ${demand.minEccentricityOf} 의 최소편심 파생 케이스다 -> 하한을 적용한다.`,
+        `            검토 모멘트   : Mux,chk = ${pad(fmt(d.mux), 10)} kN-m,  Muy,chk = ${pad(fmt(d.muy), 10)} kN-m`,
+      );
+      const rotation = radToDeg(d.alphaE - d.alphaEBeforeMinMoment);
+      if (Math.abs(rotation) > 1e-6) {
+        lines.push(
+          `            ※ 하한 처리로 편심 방향이 ${fmt(radToDeg(d.alphaEBeforeMinMoment))} deg -> ${fmt(radToDeg(d.alphaE))} deg 로 ${fmt(Math.abs(rotation))} deg 회전하였다.`,
+          "               (α_e 는 반드시 하한 처리 후에 산정해야 한다)",
+        );
+      }
+    } else if (d.minMomentGovernsX || d.minMomentGovernsY) {
+      lines.push(
+        "            원 케이스는 입력 모멘트 그대로 검토하고, 하한이 지배하는 축은",
+        `            별도의 최소편심 케이스(${demand.id}${MIN_ECCENTRICITY_ID_SUFFIX})로 추가해 함께 검토한다.`,
+        `            검토 모멘트   : Mux,chk = ${pad(fmt(d.mux), 10)} kN-m,  Muy,chk = ${pad(fmt(d.muy), 10)} kN-m  (입력값)`,
+      );
+    } else {
+      lines.push(
+        "            두 축 모두 작용모멘트가 최소모멘트보다 크다 -> 파생 케이스 없음.",
+        `            검토 모멘트   : Mux,chk = ${pad(fmt(d.mux), 10)} kN-m,  Muy,chk = ${pad(fmt(d.muy), 10)} kN-m`,
       );
     }
   }

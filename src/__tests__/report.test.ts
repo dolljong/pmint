@@ -125,6 +125,41 @@ describe("보고서", () => {
     expect(oneAxis).toContain("반드시 하한 처리 후에 산정");
   });
 
+  it("★ 최소편심이 지배하면 파생 케이스를 추가로 검토한다", () => {
+    // Muy = 0 -> e0x 하한(20mm)에 걸린다. 원 케이스 + 파생 케이스 2건이 나와야 한다.
+    const withDerived = report(solid, "bridge_lsd", [
+      { id: "D1", label: "1축", pu: 4000, muxNs: 1500, muxS: 0, muyNs: 0, muyS: 0 },
+    ]);
+    expect(withDerived).toContain("(1) 1축");
+    expect(withDerived).toContain("(2) 1축 (최소편심)");
+    expect(withDerived).toContain("D1 의 최소편심 파생 케이스");
+    expect(withDerived).toContain("별도의 최소편심 케이스(D1-e0)");
+  });
+
+  it("원 케이스의 검토 모멘트는 입력값 그대로다 (덮어쓰지 않는다)", () => {
+    const withDerived = report(solid, "bridge_lsd", [
+      { id: "D1", label: "1축", pu: 4000, muxNs: 1500, muxS: 0, muyNs: 0, muyS: 0 },
+    ]);
+    // 원 케이스 절에는 Muy,chk 가 0 인 "(입력값)" 줄이 있어야 한다.
+    expect(withDerived).toMatch(/Muy,chk = +0\.00 +kN-m +\(입력값\)/);
+  });
+
+  it("두 축 모두 여유가 있으면 파생 케이스를 만들지 않는다", () => {
+    const noDerived = report(solid, "bridge_lsd", [
+      { id: "D1", label: "여유", pu: 1000, muxNs: 900, muxS: 0, muyNs: 700, muyS: 0 },
+    ]);
+    expect(noDerived).toContain("파생 케이스 없음");
+    expect(noDerived).not.toContain("(최소편심)");
+  });
+
+  it("강도설계법은 최소편심 파생 케이스를 만들지 않는다", () => {
+    const strengthOneAxis = report(solid, "kds_strength", [
+      { id: "D1", label: "1축", pu: 4000, muxNs: 1500, muxS: 0, muyNs: 0, muyS: 0 },
+    ]);
+    expect(strengthOneAxis).not.toContain("(최소편심)");
+    expect(strengthOneAxis).toContain("최소모멘트를 별도로 중복 적용하지 않는다");
+  });
+
   it("간이법 대조는 옵션일 때만 나온다", () => {
     expect(strength).not.toContain("Bresler 역수법");
     const withSimplified = report(solid, "kds_strength", [biaxialDemand], true);

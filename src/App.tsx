@@ -17,7 +17,13 @@ import {
 } from "./engine/geometry";
 import { generateCircleRebars, generateRectangleRebars, type RectRebarLayer } from "./engine/rebarLayout";
 import { computeSurface, meridianAtTheta, momentContour, type InteractionSurface } from "./engine/surface";
-import { checkDemand, type ColumnGeometry, type DemandCheck, type DemandInput } from "./engine/demand";
+import {
+  checkDemand,
+  expandDemands,
+  type ColumnGeometry,
+  type DemandCheck,
+  type DemandInput,
+} from "./engine/demand";
 import { designCodes } from "./engine/designCodes";
 import type {
   DesignCodeId,
@@ -127,9 +133,18 @@ export default function App() {
     [rings, rebars, materials, designCode, transverse, method, taperReduction],
   );
 
+  // 한계상태설계법에서 축별 최소모멘트가 지배하면 파생 케이스가 원 케이스 뒤에 추가된다.
+  const reviewedDemands = useMemo(
+    () => (surface ? expandDemands(surface, materials, column, demands) : demands),
+    [surface, materials, column, demands],
+  );
+
   const checks = useMemo(
-    () => (surface ? demands.map((demand) => checkDemand(surface, materials, column, demand, showDesign)) : []),
-    [surface, materials, column, demands, showDesign],
+    () =>
+      surface
+        ? reviewedDemands.map((demand) => checkDemand(surface, materials, column, demand, showDesign))
+        : [],
+    [surface, materials, column, reviewedDemands, showDesign],
   );
 
   const selectedCheck = checks.find((item) => item.demand.input.id === selectedDemandId) ?? checks[0];
@@ -148,6 +163,7 @@ export default function App() {
   const report = useMemo(() => {
     if (!surface) return "단면 또는 철근이 정의되지 않아 보고서를 생성할 수 없습니다.";
     const reportColumn: ReportColumn = { ...column };
+    // 파생 케이스는 buildReport 가 직접 만든다(입력 목록을 넘긴다).
     return buildReport({ surface, materials, column: reportColumn, demands, rings, rebars, showSimplified });
   }, [surface, materials, column, demands, rings, rebars, showSimplified]);
 
@@ -521,8 +537,13 @@ export default function App() {
           {checks.map((check) => (
             <button
               key={check.demand.input.id}
-              className={`check-card ${check.ok ? "ok" : "ng"} ${check.demand.input.id === selectedDemandId ? "selected" : ""}`}
+              className={`check-card ${check.ok ? "ok" : "ng"} ${check.demand.input.id === selectedDemandId ? "selected" : ""} ${check.demand.appliesMinMoment ? "derived" : ""}`}
               onClick={() => setSelectedDemandId(check.demand.input.id)}
+              title={
+                check.demand.appliesMinMoment
+                  ? `${check.demand.input.minEccentricityOf} 의 최소편심 파생 케이스 (Mu >= Pu*e0)`
+                  : undefined
+              }
             >
               <strong>{check.demand.input.label}</strong>
               <span>Pu {fmt(check.demand.input.pu)} kN</span>

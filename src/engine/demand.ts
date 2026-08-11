@@ -14,6 +14,13 @@ import type { MaterialSet } from "./types";
  *   한계상태설계법(bridge_lsd) ->  수요(하중) 쪽을 올린다  : 최소모멘트 M ≥ NEd·e0
  *                                  (EC2 6.1(4), e0 = max(h/30, 20mm). 곡면은 손대지 않는다.)
  *
+ * ★ 하한 처리는 원 케이스를 덮어쓰지 않는다.
+ *   입력 케이스는 입력값 그대로 검토하고, 축별 하한이 지배하면 그 하한을 적용한
+ *   **파생 케이스를 목록에 추가**해 둘 다 검토·작도한다 (expandDemands).
+ *   덮어쓰기로 하면 사용자가 실제로 입력한 조합의 검토 결과가 사라져서,
+ *   어느 쪽이 지배했는지 보고서에서 되짚을 수 없다.
+ *   파생 케이스인지는 DemandInput.minEccentricityOf 로 구분한다.
+ *
  * ★ 순서 함정: 축별 최소모멘트 하한 처리는 편심 방향 α_e 를 **회전시킨다**.
  *   예) Mux*=3000, Muy*=0, NEd·e0x/1000=400  ->  α_e 가 90.0deg 에서 82.4deg 로 이동.
  *   따라서 α_e 는 반드시 하한 처리 **후에** 계산해야 한다. 아래 prepareDemand 가 그 순서를 강제한다.
@@ -36,7 +43,16 @@ export interface DemandInput {
   /** 지속하중비 */
   betaDx?: number;
   betaDy?: number;
+  /**
+   * 최소편심 파생 케이스이면 원 케이스의 id.
+   * **이 값이 있는 케이스에만** 축별 최소모멘트 하한 M ≥ Pu·e0 을 적용한다.
+   * 원 케이스(값 없음)는 입력 모멘트를 그대로 검토한다.
+   */
+  minEccentricityOf?: string;
 }
+
+/** 파생 케이스 id 접미사. 원 케이스 id 와 겹치지 않도록 '-' 를 포함한다. */
+export const MIN_ECCENTRICITY_ID_SUFFIX = "-e0";
 
 export interface ColumnGeometry {
   /** 비지지 길이 (mm) */
@@ -68,9 +84,15 @@ export interface PreparedDemand {
   /** 최소편심 (mm). 강도설계법이면 undefined. */
   e0x?: number;
   e0y?: number;
-  /** 하한 처리가 실제로 걸렸는지 */
+  /**
+   * 최소모멘트가 작용모멘트를 넘어서는지(= 하한이 지배하는지).
+   * 원 케이스에서도 **판정만** 하며, 실제 적용 여부는 appliesMinMoment 다.
+   * 파생 케이스를 만들지 결정하는 근거가 된다.
+   */
   minMomentGovernsX: boolean;
   minMomentGovernsY: boolean;
+  /** 이 케이스에 하한을 실제로 적용했는지(= 최소편심 파생 케이스인지). */
+  appliesMinMoment: boolean;
   /** 최종 검토 모멘트 (kN-m) */
   mux: number;
   muy: number;
@@ -135,8 +157,15 @@ export function prepareDemand(
   const absY = Math.abs(muyMagnified);
   const minMomentGovernsX = minMomentX > absX;
   const minMomentGovernsY = minMomentY > absY;
-  const mux = signOf(muxMagnified, alphaEBeforeMinMoment, "x") * Math.max(absX, minMomentX);
-  const muy = signOf(muyMagnified, alphaEBeforeMinMoment, "y") * Math.max(absY, minMomentY);
+
+  // 하한은 파생 케이스에서만 적용한다. 원 케이스는 입력값 그대로 검토한다.
+  const appliesMinMoment = usesMinMoment && input.minEccentricityOf !== undefined;
+  const mux = appliesMinMoment
+    ? signOf(muxMagnified, alphaEBeforeMinMoment, "x") * Math.max(absX, minMomentX)
+    : muxMagnified;
+  const muy = appliesMinMoment
+    ? signOf(muyMagnified, alphaEBeforeMinMoment, "y") * Math.max(absY, minMomentY)
+    : muyMagnified;
 
   // --- 3) 편심 방향은 하한 처리 **후에** 계산 -------------------------------
   const alphaE = Math.atan2(mux, muy);
@@ -157,6 +186,7 @@ export function prepareDemand(
     e0y,
     minMomentGovernsX,
     minMomentGovernsY,
+    appliesMinMoment,
     mux,
     muy,
     mu: Math.hypot(mux, muy),
@@ -223,6 +253,55 @@ export function checkDemand(
     ok: ratio <= 1,
     status: ratio <= 1 ? "ok" : "ng",
   };
+}
+
+/**
+ * 최소편심 파생 케이스를 만든다.
+ *
+ * 한계상태설계법에서 축별 작용모멘트(장주 확대 후)가 Pu·e0 보다 작으면
+ * 그 축을 Pu·e0 으로 끌어올린 파생 케이스를 돌려준다. 하한이 어느 축에서도
+ * 걸리지 않으면 검토할 것이 없으므로 null.
+ *
+ * 비교 대상은 **확대 후** 모멘트다. 확대 전 값과 비교하면 장주효과로 이미
+ * 하한을 넘긴 케이스에도 파생이 생겨 같은 검토를 두 번 하게 된다.
+ */
+export function minEccentricityDemand(
+  surface: InteractionSurface,
+  materials: MaterialSet,
+  column: ColumnGeometry,
+  input: DemandInput,
+): DemandInput | null {
+  if (surface.code.designBasis !== "material_factor") return null;
+  if (input.minEccentricityOf !== undefined) return null; // 파생의 파생 방지
+
+  const base = prepareDemand(surface, materials, column, input);
+  if (!base.minMomentGovernsX && !base.minMomentGovernsY) return null;
+
+  return {
+    ...input,
+    id: `${input.id}${MIN_ECCENTRICITY_ID_SUFFIX}`,
+    label: `${input.label} (최소편심)`,
+    minEccentricityOf: input.id,
+  };
+}
+
+/**
+ * 입력 케이스 목록에 최소편심 파생 케이스를 끼워 넣는다.
+ * 파생 케이스는 원 케이스 **바로 뒤**에 오므로 표·그래프에서 짝이 붙어 보인다.
+ */
+export function expandDemands(
+  surface: InteractionSurface,
+  materials: MaterialSet,
+  column: ColumnGeometry,
+  inputs: DemandInput[],
+): DemandInput[] {
+  const expanded: DemandInput[] = [];
+  for (const input of inputs) {
+    expanded.push(input);
+    const derived = minEccentricityDemand(surface, materials, column, input);
+    if (derived) expanded.push(derived);
+  }
+  return expanded;
 }
 
 /** EC2 6.1(4): e0 = max(h/30, 20mm) */

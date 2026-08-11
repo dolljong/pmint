@@ -9,7 +9,14 @@ import {
   type InteractionSurface,
 } from "../surface";
 import { capacityAt, solveAtTheta } from "../solve";
-import { checkDemand, prepareDemand, type ColumnGeometry, type DemandInput } from "../demand";
+import {
+  checkDemand,
+  expandDemands,
+  minEccentricityDemand,
+  prepareDemand,
+  type ColumnGeometry,
+  type DemandInput,
+} from "../demand";
 import type { DesignCodeId, MaterialSet, SectionModel } from "../types";
 
 const materials: MaterialSet = {
@@ -291,21 +298,42 @@ describe("우발편심: 강도설계법 = 축력 cutoff", () => {
 describe("우발편심: 한계상태설계법 = 최소모멘트", () => {
   const surface = build(rectSection, "bridge_lsd");
 
+  /** 파생 케이스를 만들어 prepareDemand 까지 돌린다. 없으면 실패시킨다. */
+  const prepareDerived = (input: DemandInput) => {
+    const derived = minEccentricityDemand(surface, materials, column, input);
+    expect(derived, "파생 케이스가 생성되어야 한다").not.toBeNull();
+    return prepareDemand(surface, materials, column, derived!);
+  };
+
   it("e0 = max(h/30, 20mm) 로 최소모멘트를 만든다", () => {
     const input: DemandInput = { id: "D1", label: "LC1", pu: 2000, muxNs: 0, muxS: 0, muyNs: 0, muyS: 0 };
     const prepared = prepareDemand(surface, materials, column, input);
     expect(prepared.e0y).toBeCloseTo(900 / 30, 9); // y방향 깊이 900 -> Mux 와 짝
     expect(prepared.e0x).toBeCloseTo(Math.max(600 / 30, 20), 9); // x방향 폭 600 -> Muy 와 짝
-    expect(prepared.mux).toBeCloseTo((2000 * 30) / 1000, 9);
-    expect(prepared.muy).toBeCloseTo((2000 * 20) / 1000, 9);
+    expect(prepared.minMomentX).toBeCloseTo((2000 * 30) / 1000, 9);
+    expect(prepared.minMomentY).toBeCloseTo((2000 * 20) / 1000, 9);
     expect(prepared.minMomentGovernsX).toBe(true);
     expect(prepared.minMomentGovernsY).toBe(true);
+  });
+
+  it("원 케이스는 입력값 그대로 두고, 하한은 파생 케이스에만 적용한다", () => {
+    const input: DemandInput = { id: "D1", label: "LC1", pu: 2000, muxNs: 0, muxS: 0, muyNs: 0, muyS: 0 };
+
+    const original = prepareDemand(surface, materials, column, input);
+    expect(original.appliesMinMoment).toBe(false);
+    expect(original.mux).toBe(0);
+    expect(original.muy).toBe(0);
+
+    const derived = prepareDerived(input);
+    expect(derived.appliesMinMoment).toBe(true);
+    expect(derived.mux).toBeCloseTo((2000 * 30) / 1000, 9);
+    expect(derived.muy).toBeCloseTo((2000 * 20) / 1000, 9);
   });
 
   it("★ 최소모멘트 하한이 편심 방향을 회전시킨다 (§1.7.3 회귀)", () => {
     // Mux 만 크고 Muy = 0 -> 하한 처리 전 alpha_e = 90deg
     const input: DemandInput = { id: "D1", label: "LC1", pu: 2000, muxNs: 3000, muxS: 0, muyNs: 0, muyS: 0 };
-    const prepared = prepareDemand(surface, materials, column, input);
+    const prepared = prepareDerived(input);
 
     expect((prepared.alphaEBeforeMinMoment * 180) / Math.PI).toBeCloseTo(90, 6);
     // Muy 가 0 -> 40 kN-m 로 올라오므로 방향이 이동해야 한다.
@@ -321,6 +349,37 @@ describe("우발편심: 한계상태설계법 = 최소모멘트", () => {
     expect(prepared.minMomentGovernsX).toBe(false);
     expect(prepared.minMomentGovernsY).toBe(false);
     expect(prepared.mux).toBeCloseTo(prepared.muxMagnified, 12);
+    expect(minEccentricityDemand(surface, materials, column, input)).toBeNull();
+  });
+
+  it("한 축만 지배해도 파생 케이스를 만들고, 지배하지 않는 축은 입력값을 유지한다", () => {
+    // Mux 는 충분히 크고(하한 60 kN-m), Muy = 0 만 하한(40 kN-m)에 걸린다.
+    const input: DemandInput = { id: "D1", label: "LC1", pu: 2000, muxNs: 3000, muxS: 0, muyNs: 0, muyS: 0 };
+    const prepared = prepareDerived(input);
+    expect(prepared.minMomentGovernsX).toBe(false);
+    expect(prepared.minMomentGovernsY).toBe(true);
+    expect(prepared.mux).toBeCloseTo(prepared.muxMagnified, 12); // 그대로
+    expect(prepared.muy).toBeCloseTo(40, 6); // 끌어올림
+  });
+
+  it("expandDemands 는 파생 케이스를 원 케이스 바로 뒤에 추가한다", () => {
+    const governed: DemandInput = { id: "D1", label: "LC1", pu: 2000, muxNs: 0, muxS: 0, muyNs: 0, muyS: 0 };
+    const free: DemandInput = { id: "D2", label: "LC2", pu: 1000, muxNs: 900, muxS: 0, muyNs: 700, muyS: 0 };
+
+    const expanded = expandDemands(surface, materials, column, [governed, free]);
+    expect(expanded.map((d) => d.id)).toEqual(["D1", "D1-e0", "D2"]);
+    expect(expanded[1].label).toBe("LC1 (최소편심)");
+    expect(expanded[1].minEccentricityOf).toBe("D1");
+    // 원 케이스 객체는 손대지 않는다.
+    expect(expanded[0]).toBe(governed);
+    expect(governed.minEccentricityOf).toBeUndefined();
+  });
+
+  it("파생의 파생은 만들지 않는다", () => {
+    const governed: DemandInput = { id: "D1", label: "LC1", pu: 2000, muxNs: 0, muxS: 0, muyNs: 0, muyS: 0 };
+    const derived = minEccentricityDemand(surface, materials, column, governed)!;
+    expect(minEccentricityDemand(surface, materials, column, derived)).toBeNull();
+    expect(expandDemands(surface, materials, column, [derived]).map((d) => d.id)).toEqual(["D1-e0"]);
   });
 
   it("축력 상한을 쓰지 않는다", () => {
