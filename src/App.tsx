@@ -1,5 +1,5 @@
 import { useMemo, useState, type Dispatch, type SetStateAction } from "react";
-import { Circle, FileText, Grid2X2, Plus, RotateCcw, Trash2 } from "lucide-react";
+import { Circle, CloudDownload, CloudUpload, FileText, Grid2X2, Plus, RotateCcw, Trash2 } from "lucide-react";
 import {
   axisNormal,
   circleRings,
@@ -36,6 +36,7 @@ import type {
   TransverseReinforcement,
 } from "./engine/types";
 import { buildReport, fmt, radToDeg, sci, type ReportColumn } from "./report";
+import { serverOpen, serverSave } from "./serverStore";
 
 interface ColumnCondition extends ColumnGeometry {
   title: string;
@@ -43,6 +44,51 @@ interface ColumnCondition extends ColumnGeometry {
   tieType: string;
 }
 
+/** 서버에 저장하는 입력 상태. 형식이 바뀌면 version 을 올린다. */
+interface SavedState {
+  version: number;
+  shapeMode: ShapeMode;
+  rings: Ring[];
+  rebars: Rebar[];
+  materials: MaterialSet;
+  designCode: DesignCodeId;
+  method: IntegrationMethod;
+  rect: RectSpec;
+  rectRebarLayers: RectRebarLayer[];
+  circleSpec: CircleSpec;
+  circleRebarSpec: CircleRebarSpec;
+  demands: DemandInput[];
+  column: ColumnCondition;
+  selectedDemandId?: string;
+  taperReduction: boolean;
+  showDesign: boolean;
+  showSimplified: boolean;
+  followDemand: boolean;
+  thetaDeg: number;
+  contourFraction: number;
+}
+
+const STATE_VERSION = 1;
+
+interface RectSpec {
+  width: number;
+  height: number;
+  wall: number;
+}
+interface CircleSpec {
+  diameter: number;
+  segments: number;
+  inner: number;
+}
+interface CircleRebarSpec {
+  cover: number;
+  diameter: number;
+  count: number;
+}
+
+const defaultRect: RectSpec = { width: 400, height: 600, wall: 0 };
+const defaultCircleSpec: CircleSpec = { diameter: 500, segments: 72, inner: 0 };
+const defaultCircleRebarSpec: CircleRebarSpec = { cover: 50, diameter: 25, count: 12 };
 const defaultRings = rectangleRings(400, 600);
 const defaultRebars: Rebar[] = [
   { id: "R1", x: -150, y: -250, diameter: 25 },
@@ -100,10 +146,10 @@ export default function App() {
   const [rebars, setRebars] = useState<Rebar[]>(defaultRebars);
   const [materials, setMaterials] = useState<MaterialSet>(defaultMaterials);
   const [designCode, setDesignCode] = useState<DesignCodeId>("kds_strength");
-  const [rect, setRect] = useState({ width: 400, height: 600, wall: 0 });
+  const [rect, setRect] = useState<RectSpec>(defaultRect);
   const [rectRebarLayers, setRectRebarLayers] = useState<RectRebarLayer[]>(defaultRectRebarLayers);
-  const [circleSpec, setCircleSpec] = useState({ diameter: 500, segments: 72, inner: 0 });
-  const [circleRebarSpec, setCircleRebarSpec] = useState({ cover: 50, diameter: 25, count: 12 });
+  const [circleSpec, setCircleSpec] = useState<CircleSpec>(defaultCircleSpec);
+  const [circleRebarSpec, setCircleRebarSpec] = useState<CircleRebarSpec>(defaultCircleRebarSpec);
   const [demands, setDemands] = useState<DemandInput[]>(defaultDemands);
   const [column, setColumn] = useState<ColumnCondition>(defaultColumnCondition);
 
@@ -269,12 +315,85 @@ export default function App() {
     setMaterials(defaultMaterials);
     changeDesignCode("kds_strength");
     setShapeMode("rectangle");
-    setRect({ width: 400, height: 600, wall: 0 });
+    setRect(defaultRect);
     setRectRebarLayers(defaultRectRebarLayers);
     setDemands(defaultDemands);
     setColumn(defaultColumnCondition);
     setSelectedDemandId("D1");
     setReportVisible(false);
+  };
+
+  // ---- 서버 저장/불러오기 (로그인 사용자 DB) -------------------------------
+  // 화면에서 편집 가능한 입력 상태 전부를 담는다. 곡면·검토 결과는 저장하지 않는다
+  // (불러온 뒤 같은 입력으로 다시 계산되므로 payload 만 커진다).
+  const buildState = (): SavedState => ({
+    version: STATE_VERSION,
+    shapeMode,
+    rings,
+    rebars,
+    materials,
+    designCode,
+    method,
+    rect,
+    rectRebarLayers,
+    circleSpec,
+    circleRebarSpec,
+    demands,
+    column,
+    selectedDemandId,
+    taperReduction,
+    showDesign,
+    showSimplified,
+    followDemand,
+    thetaDeg,
+    contourFraction,
+  });
+
+  const applySavedState = (raw: unknown) => {
+    const s = (raw ?? {}) as Partial<SavedState>;
+    if (typeof s !== "object" || !Array.isArray(s.rings) || !Array.isArray(s.rebars)) {
+      throw new Error("P-M 상관도에서 저장한 데이터가 아닙니다.");
+    }
+    setRings(s.rings);
+    setRebars(s.rebars);
+    setShapeMode(s.shapeMode === "circle" || s.shapeMode === "free" ? s.shapeMode : "rectangle");
+    if (s.materials?.concrete && s.materials?.steel) setMaterials(s.materials);
+    setRect({ ...defaultRect, ...s.rect });
+    setCircleSpec({ ...defaultCircleSpec, ...s.circleSpec });
+    setCircleRebarSpec({ ...defaultCircleRebarSpec, ...s.circleRebarSpec });
+    if (Array.isArray(s.rectRebarLayers) && s.rectRebarLayers.length) setRectRebarLayers(s.rectRebarLayers);
+    setColumn({ ...defaultColumnCondition, ...s.column });
+
+    // 설계법을 먼저 정하고 적분 방식을 덮어쓴다(changeDesignCode 가 기본값으로 되돌리므로).
+    const code = s.designCode && designCodes[s.designCode] ? s.designCode : "kds_strength";
+    changeDesignCode(code);
+    if (s.method === "fiber" || s.method === "equivalent_block") setMethod(s.method);
+
+    const nextDemands = Array.isArray(s.demands) && s.demands.length ? s.demands : defaultDemands;
+    setDemands(nextDemands);
+    setSelectedDemandId(
+      nextDemands.some((item) => item.id === s.selectedDemandId) ? s.selectedDemandId : nextDemands[0]?.id,
+    );
+
+    setTaperReduction(Boolean(s.taperReduction));
+    setShowDesign(s.showDesign ?? true);
+    setShowSimplified(Boolean(s.showSimplified));
+    setFollowDemand(s.followDemand ?? true);
+    if (Number.isFinite(s.thetaDeg)) setThetaDeg(s.thetaDeg as number);
+    if (Number.isFinite(s.contourFraction)) setContourFraction(s.contourFraction as number);
+  };
+
+  const handleServerSave = () => {
+    void serverSave(buildState);
+  };
+  const handleServerOpen = () => {
+    void serverOpen((payload) => {
+      try {
+        applySavedState(payload);
+      } catch (error) {
+        window.alert("불러오기 오류: " + (error as Error).message);
+      }
+    });
   };
 
   const usesAxialCutoff = designCodes[designCode].designBasis === "strength_reduction";
@@ -295,6 +414,15 @@ export default function App() {
         <div className="preset-row">
           <button className="preset-button" onClick={applyB5IPreset}>B5-I 예제</button>
           <button className="preset-button" onClick={applyHollowPierPreset}>중공 교각 예제</button>
+        </div>
+
+        <div className="preset-row store-row">
+          <button className="preset-button" title="현재 입력을 내 계정에 저장" onClick={handleServerSave}>
+            <CloudUpload size={15} />서버 저장
+          </button>
+          <button className="preset-button" title="내 저장 목록에서 불러오기" onClick={handleServerOpen}>
+            <CloudDownload size={15} />서버 열기
+          </button>
         </div>
 
         <section className="panel-section">

@@ -110,6 +110,17 @@ h2 {
   color: #ffffff;
 }
 
+/* 서버 저장/열기 — 예제 버튼 바로 아래 줄. 예제와 구분되게 색을 낮춘다. */
+.store-row .preset-button {
+  margin-top: 6px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  background: #455a64;
+  border-color: #455a64;
+}
+
 .segmented {
   display: grid;
   grid-template-columns: repeat(3, 1fr);
