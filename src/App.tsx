@@ -1,5 +1,17 @@
 import { useMemo, useState, type Dispatch, type SetStateAction } from "react";
-import { Circle, CloudDownload, CloudUpload, FileText, Grid2X2, Plus, RotateCcw, Trash2 } from "lucide-react";
+import {
+  Circle,
+  ClipboardCopy,
+  CloudDownload,
+  CloudUpload,
+  FileText,
+  Grid2X2,
+  Plus,
+  RotateCcw,
+  Table2,
+  Trash2,
+  X,
+} from "lucide-react";
 import {
   axisNormal,
   circleRings,
@@ -16,7 +28,14 @@ import {
   validateRings,
 } from "./engine/geometry";
 import { generateCircleRebars, generateRectangleRebars, type RectRebarLayer } from "./engine/rebarLayout";
-import { computeSurface, meridianAtTheta, momentContour, type InteractionSurface } from "./engine/surface";
+import {
+  computeSurface,
+  meridianAtTheta,
+  momentContour,
+  type InteractionSurface,
+  type SurfacePoint,
+} from "./engine/surface";
+import { referenceConcreteStress } from "./engine/section";
 import {
   checkDemand,
   expandDemands,
@@ -35,7 +54,7 @@ import type {
   ShapeMode,
   TransverseReinforcement,
 } from "./engine/types";
-import { buildReport, fmt, radToDeg, sci, type ReportColumn } from "./report";
+import { buildReport, fmt, radToDeg, sci, strain, type ReportColumn } from "./report";
 import { serverOpen, serverSave } from "./serverStore";
 
 interface ColumnCondition extends ColumnGeometry {
@@ -64,6 +83,7 @@ interface SavedState {
   showDesign: boolean;
   showSimplified: boolean;
   followDemand: boolean;
+  showNodes: boolean;
   thetaDeg: number;
   contourFraction: number;
 }
@@ -162,6 +182,7 @@ export default function App() {
   const [thetaDeg, setThetaDeg] = useState(90);
   const [contourFraction, setContourFraction] = useState(0.3);
   const [followDemand, setFollowDemand] = useState(true);
+  const [showNodes, setShowNodes] = useState(true);
 
   const transverse: TransverseReinforcement = tieTypeToTransverse(column.tieType);
   const sectionIssues = useMemo(() => validateRings(rings), [rings]);
@@ -345,6 +366,7 @@ export default function App() {
     showDesign,
     showSimplified,
     followDemand,
+    showNodes,
     thetaDeg,
     contourFraction,
   });
@@ -379,6 +401,7 @@ export default function App() {
     setShowDesign(s.showDesign ?? true);
     setShowSimplified(Boolean(s.showSimplified));
     setFollowDemand(s.followDemand ?? true);
+    setShowNodes(s.showNodes ?? true);
     if (Number.isFinite(s.thetaDeg)) setThetaDeg(s.thetaDeg as number);
     if (Number.isFinite(s.contourFraction)) setContourFraction(s.contourFraction as number);
   };
@@ -632,6 +655,7 @@ export default function App() {
             <div className="toggle-group">
               <label className="toggle"><input type="checkbox" checked={showDesign} onChange={(e) => setShowDesign(e.target.checked)} />설계강도</label>
               <label className="toggle"><input type="checkbox" checked={followDemand} onChange={(e) => setFollowDemand(e.target.checked)} />하중케이스 연동</label>
+              <label className="toggle"><input type="checkbox" checked={showNodes} onChange={(e) => setShowNodes(e.target.checked)} />계산 절점</label>
             </div>
           </div>
           <div className="slider-row">
@@ -648,7 +672,7 @@ export default function App() {
               <span className="slider-value">{fmt(activeAxial)} kN</span>
             </label>
           </div>
-          <SliceSvg surface={surface} theta={activeTheta} useDesign={showDesign} checks={checks} selectedId={selectedDemandId} />
+          <SliceSvg surface={surface} theta={activeTheta} useDesign={showDesign} checks={checks} selectedId={selectedDemandId} showNodes={showNodes} />
         </div>
 
         <div className="summary-strip">
@@ -683,6 +707,8 @@ export default function App() {
             </button>
           ))}
         </div>
+
+        <PmCoordinatePanel surface={surface} checks={checks} />
 
         <div className="report-panel">
           <div className="viewer-title">
@@ -945,15 +971,21 @@ function SliceSvg({
   useDesign,
   checks,
   selectedId,
+  showNodes,
 }: {
   surface?: InteractionSurface;
   theta: number;
   useDesign: boolean;
   checks: DemandCheck[];
   selectedId?: string;
+  showNodes: boolean;
 }) {
   const W = 820;
   const H = 380;
+
+  // 절점 선택은 **인덱스**로 들고 있는다. θ 나 설계법이 바뀌어 자오선이 다시 계산돼도
+  // 같은 c 단계를 계속 가리키므로, 슬라이더를 돌리며 한 절점의 변화를 추적할 수 있다.
+  const [selectedNode, setSelectedNode] = useState<number | undefined>(undefined);
 
   // 곡선은 미리 계산된 72방향 중 가장 가까운 것을 고르지 않고, 검토가 수렴시킨
   // **바로 그 θ** 에서 즉석 계산한다. 격자에 스냅하면 사용률 1.0 인 하중점이
@@ -1006,7 +1038,12 @@ function SliceSvg({
     ? Math.max(0, ...design.filter((s, i) => meridian[i].cappedByAxialLimit).map((s) => s.m))
     : 0;
 
+  // 절점을 숨기면 선택 상태도 함께 접는다(고를 수 없는 점의 근거만 남아 있으면 혼란스럽다).
+  // 상태 자체는 지우지 않으므로 체크박스를 다시 켜면 보던 절점이 그대로 돌아온다.
+  const selectedPoint = showNodes && selectedNode !== undefined ? meridian[selectedNode] : undefined;
+
   return (
+    <>
     <svg className="pm-svg" viewBox={`0 0 ${W} ${H}`}>
       {xTicks.map((t) => (
         <g key={`x${t}`}>
@@ -1033,6 +1070,44 @@ function SliceSvg({
         </>
       )}
 
+      {/* 곡선을 만든 계산점(절점). 클릭하면 그 점의 단면 적분 근거를 펼친다.
+          투명한 큰 원을 히트 영역으로 덧대야 3px 점을 실제로 누를 수 있다.
+          파괴곡선(공칭)과 설계곡선의 같은 인덱스는 **동일한 (θ, c)** 이고 φ 배수만 다르다.
+          따라서 어느 쪽을 눌러도 같은 근거 패널이 열리고, 두 마커가 함께 강조된다. */}
+      {showNodes && useDesign && nominal.map((s, i) => (
+        <g
+          key={`fnode-${i}`}
+          className="pm-node-hit"
+          onClick={() => setSelectedNode(i === selectedNode ? undefined : i)}
+        >
+          <title>{`파괴곡선 절점 #${i + 1} — c = ${fmt(meridian[i].c)} mm, Pn = ${fmt(s.p)} kN, |Mn| = ${fmt(s.m)} kN-m`}</title>
+          <circle cx={toX(s.m)} cy={toY(s.p)} r={9} fill="transparent" />
+          <circle
+            className={`pm-node nominal ${i === selectedNode ? "selected" : ""}`}
+            cx={toX(s.m)}
+            cy={toY(s.p)}
+            r={i === selectedNode ? 6 : 3.2}
+          />
+        </g>
+      ))}
+
+      {showNodes && series.map((s, i) => (
+        <g
+          key={`node-${i}`}
+          className="pm-node-hit"
+          onClick={() => setSelectedNode(i === selectedNode ? undefined : i)}
+        >
+          <title>{`${useDesign ? "설계곡선" : "파괴곡선"} 절점 #${i + 1} — c = ${fmt(meridian[i].c)} mm, ${useDesign ? "φPn" : "Pn"} = ${fmt(s.p)} kN, ${useDesign ? "|φMn|" : "|Mn|"} = ${fmt(s.m)} kN-m`}</title>
+          <circle cx={toX(s.m)} cy={toY(s.p)} r={9} fill="transparent" />
+          <circle
+            className={`pm-node ${i === selectedNode ? "selected" : ""}`}
+            cx={toX(s.m)}
+            cy={toY(s.p)}
+            r={i === selectedNode ? 6 : 3.2}
+          />
+        </g>
+      ))}
+
       {demandPoints.map((d) => (
         <g key={d.id}>
           <circle
@@ -1050,7 +1125,378 @@ function SliceSvg({
       {useDesign && <text className="legend-text" x={R - 160} y={T + 18}>공칭 Pn-Mn</text>}
       <text className="legend-text" x={R - 160} y={T + 36}>{useDesign ? "설계 φPn-φMn" : "공칭 Pn-Mn"}</text>
     </svg>
+
+    {selectedPoint ? (
+      <NodeDetail
+        point={selectedPoint}
+        index={selectedNode!}
+        total={meridian.length}
+        surface={surface}
+        useDesign={useDesign}
+        onClose={() => setSelectedNode(undefined)}
+      />
+    ) : showNodes ? (
+      <p className="node-hint">곡선 위의 절점(●)을 클릭하면 그 점의 계산 근거를 볼 수 있습니다.</p>
+    ) : null}
+    </>
   );
+}
+
+// ---------------------------------------------------------------------------
+// 절점 계산 근거
+// ---------------------------------------------------------------------------
+
+/**
+ * P-M 곡선 위 한 계산점의 산출 근거.
+ *
+ * 곡선의 각 점은 (θ, c) 하나에 대한 단면 적분 결과다(engine/section.ts sectionResponse).
+ * 여기서는 그 중간값 — 변형률 분포, 콘크리트 압축력, 철근별 응력/힘, 합력, φ — 을
+ * 보고서와 같은 순서로 펼쳐서, 화면의 점 하나가 어떤 계산에서 나왔는지 추적할 수 있게 한다.
+ */
+function NodeDetail({
+  point,
+  index,
+  total,
+  surface,
+  useDesign,
+  onClose,
+}: {
+  point: SurfacePoint;
+  index: number;
+  total: number;
+  surface: InteractionSurface;
+  useDesign: boolean;
+  onClose: () => void;
+}) {
+  const { materials, code } = surface;
+  const method = surface.integration.method ?? code.defaultIntegration;
+  const block = code.stressBlock(materials.concrete.fc);
+  const concreteStress = referenceConcreteStress(materials, code, method);
+  const fcd = materials.concrete.fc / code.materialFactors.concrete;
+  const fyd = materials.steel.fy / code.materialFactors.steel;
+  const ey = materials.steel.fy / materials.steel.es;
+  const r = point.response;
+  const na = r.neutralAxis;
+  const fiber = method === "fiber";
+  // 자오선 꼬리(c 를 순압축까지 늘린 구간)는 본체와 c 간격이 달라 구분해 둔다.
+  const isTail = point.id.startsWith("exact-tail");
+  const zone =
+    point.maxTensileStrain <= ey ? "압축지배단면" : point.maxTensileStrain >= 0.005 ? "인장지배단면" : "전이단면";
+
+  return (
+    <div className="node-detail">
+      <div className="node-detail-head">
+        <strong>절점 #{index + 1} / {total}</strong>
+        <span>
+          {isTail ? "순압축 연장 구간" : "자오선 계산점"} · θ = {fmt(radToDeg(point.theta))}° · c = {fmt(point.c)} mm ·
+          파괴곡선 (|Mn|, Pn) = ({fmt(point.mn)}, {fmt(point.pn)})
+          {useDesign && <> · 설계곡선 (|φMn|, φPn) = ({fmt(point.md)}, {fmt(point.pd)})</>}
+        </span>
+        <button className="icon-button" title="닫기" onClick={onClose}><X size={16} /></button>
+      </div>
+
+      <div className="node-detail-grid">
+        <section>
+          <h4>① 중립축 · 변형률</h4>
+          <Row k="법선 방향 좌표" v={`s = x·cos θ + y·sin θ  (n̂ 는 압축측)`} />
+          <Row k="단면 투영 범위" v={`sMin = ${fmt(na.sMin)} mm,  sMax = ${fmt(na.sMax)} mm,  h_θ = ${fmt(na.depth)} mm`} />
+          <Row k="중립축 깊이" v={`c = ${fmt(na.c)} mm  →  중립축 s = sMax − c = ${fmt(na.sMax - na.c)} mm`} />
+          <Row
+            k="압축영역 경계"
+            v={fiber ? `s ≥ sMax − c = ${fmt(na.sMax - na.c)} mm  (β₁ 미사용)` : `a = β₁·c = ${fmt(na.a)} mm  (β₁ = ${fmt(block.beta)}),  s ≥ ${fmt(na.blockLimit)} mm`}
+          />
+          <Row k="변형률 분포" v={`ε(x,y) = ecu·(s − (sMax − c))/c,  ecu = ${strain(materials.concrete.ecu)}`} />
+          <Row k="최대 인장변형률" v={`ε_t = ${strain(point.maxTensileStrain)}  (ε_y = ${strain(ey)})`} />
+        </section>
+
+        <section>
+          <h4>② 콘크리트 압축력</h4>
+          <Row k="적분 방식" v={fiber ? "포물선-직선 파이버 (밴드별 정확 면적 × 밴드 도심 응력)" : "등가직사각형 응력블록 (균일 응력)"} />
+          <Row
+            k="기준 응력"
+            v={
+              fiber
+                ? `정점응력 = α_cc·fcd = ${fmt(concreteStress)} MPa  (fcd = ${fmt(fcd)} MPa)`
+                : `σ = (0.85·η)·fcd = ${fmt(block.alpha)} × ${fmt(fcd)} = ${fmt(concreteStress)} MPa`
+            }
+          />
+          <Row k="압축 면적" v={`Ac,comp = ${sci(r.concrete.area)} mm² (중공 공제),  도심 = (${fmt(r.concrete.centroid.x)}, ${fmt(r.concrete.centroid.y)}) mm`} />
+          <Row
+            k="압축력"
+            v={fiber ? `Cc = Σ σ(ε_i)·A_i /1000 = ${fmt(r.concrete.force)} kN` : `Cc = σ·Ac,comp/1000 = ${fmt(r.concrete.force)} kN`}
+          />
+          <Row k="콘크리트 모멘트" v={`Mcx = ${fmt(r.concrete.mx)} kN-m,  Mcy = ${fmt(r.concrete.my)} kN-m`} />
+          <Row k="모멘트 기준점" v={`소성중심 (${fmt(r.reference.x)}, ${fmt(r.reference.y)}) mm  — KDS 14 20 20`} />
+        </section>
+
+        <section>
+          <h4>③ 철근력</h4>
+          <Row k="응력" v={`fs = clamp(Es·ε, −fyd, +fyd),  fyd = ${fmt(fyd)} MPa`} />
+          <Row k="압축철근 공제" v={`fs,net = fs − ${fmt(concreteStress)} MPa  (압축측 철근이 차지한 콘크리트 치환)`} />
+          <Row k="압축철근 합력" v={`Cs = ${fmt(r.steel.compressionForce)} kN  (Msx = ${fmt(r.steel.compressionMx)}, Msy = ${fmt(r.steel.compressionMy)} kN-m)`} />
+          <Row k="인장철근 합력" v={`Tt = ${fmt(r.steel.tensionForce)} kN  (Mtx = ${fmt(r.steel.tensionMx)}, Mty = ${fmt(r.steel.tensionMy)} kN-m)`} />
+        </section>
+
+        <section>
+          <h4>④ 합력 (공칭)</h4>
+          <Row k="축력" v={`Pn = Cc + Cs + Tt = ${fmt(r.concrete.force)} ${signed(r.steel.compressionForce)} ${signed(r.steel.tensionForce)} = ${fmt(point.pn)} kN`} />
+          <Row k="모멘트" v={`Mnx = Σ F·(y − y_pc)/1000 = ${fmt(point.mnx)} kN-m`} />
+          <Row k="" v={`Mny = Σ F·(x − x_pc)/1000 = ${fmt(point.mny)} kN-m`} />
+          <Row k="모멘트 크기" v={`|Mn| = √(Mnx² + Mny²) = ${fmt(point.mn)} kN-m`} />
+          <Row k="편심 방향" v={`α_e = atan2(Mnx, Mny) = ${fmt(radToDeg(point.alphaE))}°  (θ 와의 차 = ${fmt(Math.abs(signedDeg(radToDeg(point.theta) - radToDeg(point.alphaE))))}°)`} />
+        </section>
+
+        <section>
+          <h4>⑤ 설계강도</h4>
+          <Row k="지배단면" v={`ε_t = ${strain(point.maxTensileStrain)} ${point.maxTensileStrain <= ey ? "≤" : ">"} ε_y = ${strain(ey)}  →  ${zone}`} />
+          <Row k="강도감소계수" v={`φ = ${fmt(point.phi)}  (${surface.integration.transverseReinforcement === "spiral" ? "나선 철근" : "띠 철근"})`} />
+          <Row k="설계 축력" v={`φPn = ${fmt(point.pdRaw)} kN${point.cappedByAxialLimit ? `  →  축력 상한 ${fmt(surface.axialCap)} kN 로 절단` : ""}`} />
+          <Row k="설계 모멘트" v={`φMnx = ${fmt(point.mdx)},  φMny = ${fmt(point.mdy)},  |φMn| = ${fmt(point.md)} kN-m`} />
+        </section>
+      </div>
+
+      <details className="node-bars">
+        <summary>철근별 상세 ({r.bars.length}본)</summary>
+        <div className="node-bar-table">
+          <div className="node-bar-head">
+            <span>ID</span><span>x</span><span>y</span><span>s</span><span>As</span><span>ε</span><span>fs</span><span>fs,net</span><span>F (kN)</span>
+          </div>
+          {r.bars.map((bar) => (
+            <div className={`node-bar-row ${bar.compression ? "comp" : "tens"}`} key={bar.id}>
+              <span>{bar.id}</span>
+              <span>{fmt(bar.x)}</span>
+              <span>{fmt(bar.y)}</span>
+              <span>{fmt(bar.s)}</span>
+              <span>{fmt(bar.area)}</span>
+              <span>{strain(bar.strain)}</span>
+              <span>{fmt(bar.stress)}</span>
+              <span>{fmt(bar.netStress)}</span>
+              <span>{fmt(bar.force)}</span>
+            </div>
+          ))}
+        </div>
+      </details>
+    </div>
+  );
+}
+
+function Row({ k, v }: { k: string; v: string }) {
+  return (
+    <div className="node-row">
+      <span className="k">{k}</span>
+      <span className="v">{v}</span>
+    </div>
+  );
+}
+
+function signedDeg(value: number): number {
+  let d = value;
+  while (d > 180) d -= 360;
+  while (d <= -180) d += 360;
+  return d;
+}
+
+/** 합산식 안에서 항의 부호를 연산자로 보여준다 ("+ -142" 대신 "- 142"). */
+function signed(value: number): string {
+  return value < 0 ? `- ${fmt(-value)}` : `+ ${fmt(value)}`;
+}
+
+// ---------------------------------------------------------------------------
+// 하중케이스별 P-M 좌표 목록 (외부 도구로 곡선을 다시 그리기 위한 좌표)
+// ---------------------------------------------------------------------------
+
+/** 목록/CSV 에 담는 한 절점의 좌표. 화면에 그려지는 값과 **같은 값**이어야 한다. */
+interface CoordRow {
+  index: number;
+  c: number;
+  epsT: number;
+  phi: number;
+  pn: number;
+  mnx: number;
+  mny: number;
+  mn: number;
+  /** 축력 상한 clamp 적용 후 — 설계곡선이 실제로 그려지는 값 */
+  pd: number;
+  mdx: number;
+  mdy: number;
+  md: number;
+  capped: boolean;
+}
+
+/**
+ * 하중케이스별 P-M 좌표 목록.
+ *
+ * 각 케이스의 강도곡선은 그 케이스가 수렴시킨 θ 자오선이다(SliceSvg 와 동일하게
+ * meridianAtTheta + tailSteps 14 로 뽑는다). 화면 곡선과 좌표가 어긋나면 목록의
+ * 의미가 없으므로 생성 경로를 공유한다.
+ *
+ * 목적은 이 좌표를 엑셀 등 다른 도구로 옮겨 같은 곡선을 다시 그리는 것이다.
+ * 따라서 화면 표시는 읽기 쉬운 반올림값이지만, CSV 복사는 소수 4자리까지 담는다.
+ */
+function PmCoordinatePanel({
+  surface,
+  checks,
+}: {
+  surface?: InteractionSurface;
+  checks: DemandCheck[];
+}) {
+  const [visible, setVisible] = useState(false);
+  const [openId, setOpenId] = useState<string | undefined>(undefined);
+
+  // 펼치기 전에는 계산하지 않는다. 케이스마다 74회 단면적분이 추가로 든다.
+  const cases = useMemo(() => {
+    if (!visible || !surface) return [];
+    return checks.map((check) => {
+      // 역해석 해가 없으면(예: Pu 가 축력 상한 초과) 작용 편심 방향 α_e 를 θ 로 대신 쓴다.
+      // 화면의 θ 슬라이더를 끌어오면 같은 입력이 화면 상태에 따라 다른 좌표를 뱉는다 —
+      // 옮겨 그릴 좌표는 입력만으로 재현돼야 하므로 UI 상태에 의존시키지 않는다.
+      const theta = check.capacity?.theta ?? check.demand.alphaE;
+      const meridian = meridianAtTheta(surface, theta, { tailSteps: 14 });
+      return {
+        id: check.demand.input.id,
+        label: check.demand.input.label,
+        theta,
+        solved: Boolean(check.capacity),
+        derived: check.demand.appliesMinMoment,
+        pu: check.demand.input.pu,
+        mu: check.demand.mu,
+        rows: meridian.map((p, i) => toCoordRow(p, i)),
+      };
+    });
+  }, [visible, surface, checks]);
+
+  const activeId = openId && cases.some((item) => item.id === openId) ? openId : cases[0]?.id;
+  const active = cases.find((item) => item.id === activeId);
+
+  return (
+    <div className="coord-panel">
+      <div className="viewer-title">
+        <h2>하중케이스별 P-M 좌표</h2>
+        <button className="report-button" onClick={() => setVisible((v) => !v)}>
+          <Table2 size={16} />좌표 목록 {visible ? "닫기" : "보기"}
+        </button>
+      </div>
+
+      {visible && cases.length === 0 && <p className="muted small">검토할 하중케이스가 없습니다.</p>}
+
+      {visible && cases.length > 0 && (
+        <>
+          <div className="coord-tabs">
+            {cases.map((item) => (
+              <button
+                key={item.id}
+                className={`coord-tab ${item.id === activeId ? "selected" : ""} ${item.derived ? "derived" : ""}`}
+                onClick={() => setOpenId(item.id)}
+              >
+                {item.label}
+                <span>θ {fmt(radToDeg(item.theta))}°</span>
+              </button>
+            ))}
+          </div>
+
+          {active && (
+            <>
+              <div className="coord-meta">
+                <span>
+                  Pu = {fmt(active.pu)} kN, |Mu| = {fmt(active.mu)} kN-m 에서 수렴한 중립축 각도{" "}
+                  <strong>θ = {fmt(radToDeg(active.theta))}°</strong> 의 자오선 {active.rows.length}점입니다.
+                  {!active.solved && " (역해석 해가 없어 작용 편심 방향 α_e 를 θ 로 대신 쓴 근사입니다)"}
+                </span>
+                <button className="chip-button" onClick={() => void copyCoordCsv(active.label, active.theta, active.rows)}>
+                  <ClipboardCopy size={14} />CSV 복사
+                </button>
+              </div>
+
+              <div className="coord-table">
+                <div className="coord-head coord-row">
+                  <span>#</span><span>c (mm)</span><span>ε_t</span><span>φ</span>
+                  <span>Pn (kN)</span><span>Mnx</span><span>Mny</span><span>|Mn| (kN-m)</span>
+                  <span>φPn (kN)</span><span>φMnx</span><span>φMny</span><span>|φMn| (kN-m)</span>
+                </div>
+                {active.rows.map((row) => (
+                  <div className={`coord-row ${row.capped ? "capped" : ""}`} key={row.index}>
+                    <span>{row.index}</span>
+                    <span>{fmt(row.c)}</span>
+                    <span>{strain(row.epsT)}</span>
+                    <span>{fmt(row.phi)}</span>
+                    <span>{fmt(row.pn)}</span>
+                    <span>{fmt(row.mnx)}</span>
+                    <span>{fmt(row.mny)}</span>
+                    <span>{fmt(row.mn)}</span>
+                    <span>{fmt(row.pd)}{row.capped ? "*" : ""}</span>
+                    <span>{fmt(row.mdx)}</span>
+                    <span>{fmt(row.mdy)}</span>
+                    <span>{fmt(row.md)}</span>
+                  </div>
+                ))}
+              </div>
+
+              <p className="coord-note">
+                파괴곡선은 (|Mn|, Pn), 설계곡선은 (|φMn|, φPn) 을 순서대로 이으면 화면과 같은 곡선이 됩니다.
+                2축 평면에 그리려면 (Mnx, Mny) 를 쓰십시오. * 는 축력 상한 α·φ·Pn0 = {fmt(surface?.axialCap ?? 0)} kN
+                으로 잘린 점이며, 그 구간은 φPn 이 일정합니다.
+              </p>
+            </>
+          )}
+        </>
+      )}
+    </div>
+  );
+}
+
+function toCoordRow(p: SurfacePoint, i: number): CoordRow {
+  return {
+    index: i + 1,
+    c: p.c,
+    epsT: p.maxTensileStrain,
+    phi: p.phi,
+    pn: p.pn,
+    mnx: p.mnx,
+    mny: p.mny,
+    mn: p.mn,
+    pd: p.pd,
+    mdx: p.mdx,
+    mdy: p.mdy,
+    md: p.md,
+    capped: p.cappedByAxialLimit,
+  };
+}
+
+/** 화면 표시는 반올림값이지만 옮겨 그릴 좌표는 소수 4자리까지 준다. */
+function csvNumber(value: number): string {
+  if (!Number.isFinite(value)) return "";
+  return String(Math.round(value * 1e4) / 1e4);
+}
+
+async function copyCoordCsv(label: string, theta: number, rows: CoordRow[]) {
+  const csv = [
+    `# ${label}, theta = ${radToDeg(theta)} deg`,
+    "no,c_mm,eps_t,phi,Pn_kN,Mnx_kNm,Mny_kNm,Mn_kNm,phiPn_kN,phiMnx_kNm,phiMny_kNm,phiMn_kNm,axial_capped",
+    ...rows.map((r) =>
+      [
+        r.index,
+        csvNumber(r.c),
+        csvNumber(r.epsT),
+        csvNumber(r.phi),
+        csvNumber(r.pn),
+        csvNumber(r.mnx),
+        csvNumber(r.mny),
+        csvNumber(r.mn),
+        csvNumber(r.pd),
+        csvNumber(r.mdx),
+        csvNumber(r.mdy),
+        csvNumber(r.md),
+        r.capped ? 1 : 0,
+      ].join(","),
+    ),
+  ].join("\n");
+
+  try {
+    await navigator.clipboard.writeText(csv);
+    window.alert(`${label} 의 P-M 좌표 ${rows.length}점을 클립보드에 복사했습니다.`);
+  } catch {
+    window.alert("클립보드 복사가 차단되었습니다. 표를 직접 선택해 복사하십시오.");
+  }
 }
 
 // ---------------------------------------------------------------------------

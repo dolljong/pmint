@@ -403,22 +403,245 @@ h2 {
   stroke-width: 1;
 }
 
-.pm-node {
+/* ---------- P-M 곡선의 계산 절점 ---------- */
+
+.pm-node-hit {
   cursor: pointer;
-  transition: r 120ms ease, stroke-width 120ms ease;
 }
 
-.pm-node:hover,
-.pm-node:focus {
+.pm-node {
+  fill: #ffffff;
+  stroke: #245f73;
+  stroke-width: 1.6;
+  transition: r 120ms ease, stroke-width 120ms ease, fill 120ms ease;
+}
+
+.pm-node-hit:hover .pm-node {
+  fill: #245f73;
   stroke: #1d2429;
   stroke-width: 2;
-  outline: none;
+}
+
+/* 파괴곡선(공칭) 위의 절점. 설계곡선 절점과 색으로 구분한다. */
+.pm-node.nominal {
+  stroke: #8c3d3d;
+}
+
+.pm-node-hit:hover .pm-node.nominal {
+  fill: #8c3d3d;
 }
 
 .pm-node.selected {
   fill: #f2b544;
   stroke: #1d2429;
   stroke-width: 2.5;
+}
+
+.node-hint {
+  margin: 0;
+  padding: 2px 4px;
+  font-size: 12px;
+  color: #7c8b93;
+}
+
+.node-detail {
+  border: 1px solid #d8e0e4;
+  border-left: 4px solid #f2b544;
+  border-radius: 8px;
+  background: #fbfcfd;
+  padding: 12px 14px;
+  display: grid;
+  gap: 12px;
+}
+
+.node-detail-head {
+  display: grid;
+  grid-template-columns: auto 1fr auto;
+  align-items: center;
+  gap: 12px;
+}
+
+.node-detail-head strong {
+  font-size: 14px;
+}
+
+.node-detail-head span {
+  font-size: 12px;
+  color: #60717a;
+}
+
+.node-detail-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(330px, 1fr));
+  gap: 10px 22px;
+}
+
+.node-detail-grid h4 {
+  margin: 0 0 6px;
+  font-size: 12px;
+  color: #245f73;
+  letter-spacing: 0.02em;
+}
+
+.node-row {
+  display: grid;
+  grid-template-columns: 104px 1fr;
+  gap: 8px;
+  padding: 2px 0;
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.node-row .k {
+  color: #7c8b93;
+}
+
+.node-row .v {
+  color: #1d2429;
+  font-variant-numeric: tabular-nums;
+  word-break: break-word;
+}
+
+.node-bars summary {
+  cursor: pointer;
+  font-size: 12px;
+  color: #245f73;
+}
+
+.node-bar-table {
+  margin-top: 8px;
+  max-height: 240px;
+  overflow-y: auto;
+  font-size: 11.5px;
+  font-variant-numeric: tabular-nums;
+}
+
+.node-bar-head,
+.node-bar-row {
+  display: grid;
+  grid-template-columns: 56px repeat(8, 1fr);
+  gap: 6px;
+  padding: 3px 4px;
+  text-align: right;
+}
+
+.node-bar-head {
+  position: sticky;
+  top: 0;
+  background: #fbfcfd;
+  color: #7c8b93;
+  border-bottom: 1px solid #e1e7ea;
+}
+
+.node-bar-head span:first-child,
+.node-bar-row span:first-child {
+  text-align: left;
+}
+
+.node-bar-row.comp {
+  color: #245f73;
+}
+
+.node-bar-row.tens {
+  color: #a83232;
+}
+
+/* ---------- 하중케이스별 P-M 좌표 목록 ---------- */
+
+.coord-panel {
+  grid-column: 1 / -1;
+  background: #ffffff;
+  border: 1px solid #d8e0e4;
+  border-radius: 8px;
+  padding: 16px;
+  display: grid;
+  gap: 12px;
+}
+
+.coord-tabs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.coord-tab {
+  display: grid;
+  grid-auto-flow: column;
+  align-items: center;
+  gap: 10px;
+  padding: 6px 14px;
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.coord-tab span {
+  font-weight: 400;
+  color: #7c8b93;
+  font-variant-numeric: tabular-nums;
+}
+
+.coord-tab.selected {
+  border-color: #245f73;
+  background: #eaf1f4;
+}
+
+/* 최소편심 파생 케이스 — 사용자가 입력한 케이스가 아님을 점선으로 구분한다. */
+.coord-tab.derived {
+  border-style: dashed;
+}
+
+.coord-meta {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  align-items: center;
+  gap: 12px;
+  font-size: 12px;
+  color: #60717a;
+}
+
+.coord-meta strong {
+  color: #1d2429;
+}
+
+.coord-table {
+  max-height: 340px;
+  overflow: auto;
+  border: 1px solid #e1e7ea;
+  border-radius: 6px;
+  font-size: 11.5px;
+  font-variant-numeric: tabular-nums;
+}
+
+.coord-row {
+  display: grid;
+  grid-template-columns: 42px repeat(11, minmax(58px, 1fr));
+  gap: 6px;
+  padding: 3px 8px;
+  text-align: right;
+}
+
+.coord-row:nth-child(even) {
+  background: #f7fafb;
+}
+
+.coord-head {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  background: #ffffff;
+  color: #7c8b93;
+  border-bottom: 1px solid #e1e7ea;
+}
+
+.coord-row.capped {
+  color: #6d4a23;
+}
+
+.coord-note {
+  margin: 0;
+  font-size: 12px;
+  line-height: 1.6;
+  color: #7c8b93;
 }
 
 .legend-text {
