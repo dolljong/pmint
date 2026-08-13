@@ -980,8 +980,15 @@ function SliceSvg({
   selectedId?: string;
   showNodes: boolean;
 }) {
-  const W = 820;
-  const H = 380;
+  // 축 안쪽(그래프 영역)을 정사각형으로 잡는다. 컨테이너 폭에 맞춰 늘리면 |M| 축만
+  // 늘어나 곡선 기울기가 실제 비율과 달라 보인다. 여백을 먼저 정하고 W/H 를 역산한다.
+  const L = 66;
+  const T = 20;
+  const PLOT = 520;
+  const R = L + PLOT;
+  const B = T + PLOT;
+  const W = R + 24;
+  const H = B + 34;
 
   // 절점 선택은 **인덱스**로 들고 있는다. θ 나 설계법이 바뀌어 자오선이 다시 계산돼도
   // 같은 c 단계를 계속 가리키므로, 슬라이더를 돌리며 한 절점의 변화를 추적할 수 있다.
@@ -996,7 +1003,12 @@ function SliceSvg({
     () => (surface ? meridianAtTheta(surface, theta, { tailSteps: 14 }) : []),
     [surface, theta],
   );
-  if (!surface || meridian.length === 0) return <svg className="pm-svg" viewBox={`0 0 ${W} ${H}`} />;
+  // aspectRatio 를 인라인으로 준다 — 정사각형 그래프의 근거는 위 W/H 역산이고,
+  // CSS 에 같은 숫자를 또 적어두면 둘이 어긋날 때 조용히 찌그러진다.
+  const boxStyle = { aspectRatio: `${W} / ${H}` };
+  if (!surface || meridian.length === 0) {
+    return <svg className="pm-svg square" viewBox={`0 0 ${W} ${H}`} style={boxStyle} />;
+  }
 
   const nominal = meridian.map((p) => ({ m: p.mn, p: p.pn }));
   const design = meridian.map((p) => ({ m: p.md, p: p.pd }));
@@ -1019,10 +1031,6 @@ function SliceSvg({
   const minY = Math.min(...ys) * 1.1;
   const maxY = Math.max(...ys) * 1.05;
 
-  const L = 66;
-  const R = W - 24;
-  const T = 20;
-  const B = H - 34;
   const toX = (m: number) => map(m, minX, maxX, L, R);
   const toY = (p: number) => map(p, minY, maxY, B, T);
 
@@ -1044,7 +1052,7 @@ function SliceSvg({
 
   return (
     <>
-    <svg className="pm-svg" viewBox={`0 0 ${W} ${H}`}>
+    <svg className="pm-svg square" viewBox={`0 0 ${W} ${H}`} style={boxStyle}>
       {xTicks.map((t) => (
         <g key={`x${t}`}>
           <line className="chart-grid minor" x1={toX(t)} x2={toX(t)} y1={T} y2={B} />
@@ -1669,7 +1677,9 @@ function buildTicks(min: number, max: number, count: number): number[] {
   const step = niceStep((max - min) / (count - 1));
   const start = Math.ceil(min / step) * step;
   const ticks: number[] = [];
-  for (let value = start; value <= max + step * 0.25; value += step) {
+  // 허용오차는 부동소수 오차만 흡수할 만큼만 둔다. 이보다 크면 축 범위를 넘어선 눈금이
+  // 하나 더 그려져, 마지막 라벨이 그래프 박스 밖으로 삐져나간다.
+  for (let value = start; value <= max + Math.abs(step) * 1e-6; value += step) {
     ticks.push(Math.abs(value) < step * 1e-6 ? 0 : round(value));
   }
   return ticks;

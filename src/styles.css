@@ -297,6 +297,16 @@ h2 {
   border-radius: 6px;
 }
 
+/* 정사각형 그래프. 높이는 aspect-ratio(인라인, 컴포넌트가 산정)가 정하므로
+   height/min-height 를 풀어 준다. 폭 상한이 없으면 넓은 화면에서 세로로도
+   그만큼 길어져 한 화면에 들어오지 않는다. */
+.pm-svg.square {
+  width: min(100%, 680px);
+  height: auto;
+  min-height: 0;
+  justify-self: center;
+}
+
 .concrete-shape {
   fill: #d7ded8;
   stroke: #354b54;
