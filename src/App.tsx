@@ -1,4 +1,4 @@
-import { useMemo, useState, type Dispatch, type SetStateAction } from "react";
+import { useCallback, useEffect, useMemo, useState, type CSSProperties, type Dispatch, type PointerEvent as ReactPointerEvent, type SetStateAction } from "react";
 import {
   Circle,
   ClipboardCopy,
@@ -56,6 +56,10 @@ import type {
 } from "./engine/types";
 import { buildReport, fmt, radToDeg, sci, strain, type ReportColumn } from "./report";
 import { serverOpen, serverSave } from "./serverStore";
+
+const PANEL_WIDTH_KEY = "pmint.inputPanelWidth";
+const PANEL_DEFAULT_WIDTH = 420;
+const PANEL_MIN_WIDTH = 320;
 
 interface ColumnCondition extends ColumnGeometry {
   title: string;
@@ -419,10 +423,59 @@ export default function App() {
     });
   };
 
+  const [panelWidth, setPanelWidth] = useState<number>(() => {
+    try {
+      const saved = Number(window.localStorage.getItem(PANEL_WIDTH_KEY));
+      if (Number.isFinite(saved) && saved >= PANEL_MIN_WIDTH) return saved;
+    } catch {
+      /* ignore */
+    }
+    return PANEL_DEFAULT_WIDTH;
+  });
+  const [resizing, setResizing] = useState(false);
+
+  useEffect(() => {
+    try {
+      window.localStorage.setItem(PANEL_WIDTH_KEY, String(Math.round(panelWidth)));
+    } catch {
+      /* ignore */
+    }
+  }, [panelWidth]);
+
+  const startPanelResize = useCallback((event: ReactPointerEvent<HTMLDivElement>) => {
+    if (event.button !== 0) return;
+    if (event.detail >= 2) {
+      setPanelWidth(PANEL_DEFAULT_WIDTH);
+      return;
+    }
+    const startX = event.clientX;
+    const startWidth = panelWidth;
+    const maxWidth = Math.max(PANEL_MIN_WIDTH, window.innerWidth - 480);
+    setResizing(true);
+    const onMove = (e: PointerEvent) => {
+      const next = Math.min(maxWidth, Math.max(PANEL_MIN_WIDTH, startWidth + e.clientX - startX));
+      setPanelWidth(next);
+    };
+    const onUp = () => {
+      setResizing(false);
+      window.removeEventListener("pointermove", onMove);
+      window.removeEventListener("pointerup", onUp);
+      window.removeEventListener("pointercancel", onUp);
+    };
+    window.addEventListener("pointermove", onMove);
+    window.addEventListener("pointerup", onUp);
+    window.addEventListener("pointercancel", onUp);
+  }, [panelWidth]);
+
+  const resetPanelWidth = useCallback(() => setPanelWidth(PANEL_DEFAULT_WIDTH), []);
+
   const usesAxialCutoff = designCodes[designCode].designBasis === "strength_reduction";
 
   return (
-    <main className="app-shell">
+    <main
+      className={resizing ? "app-shell resizing" : "app-shell"}
+      style={{ "--input-panel-width": `${panelWidth}px` } as CSSProperties}
+    >
       <aside className="input-panel">
         <header className="panel-header">
           <div>
@@ -629,6 +682,16 @@ export default function App() {
           </label>
         </section>
       </aside>
+
+      <div
+        className="panel-resizer"
+        role="separator"
+        aria-orientation="vertical"
+        aria-label="입력 패널 폭 조절"
+        title="드래그하여 폭 조절 · 더블클릭으로 기본 폭"
+        onPointerDown={startPanelResize}
+        onDoubleClick={resetPanelWidth}
+      />
 
       <section className="workbench">
         <div className="viewer-row">

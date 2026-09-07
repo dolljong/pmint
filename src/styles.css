@@ -51,9 +51,46 @@ label {
 }
 
 .app-shell {
+  --input-panel-width: 420px;
   min-height: 100vh;
   display: grid;
-  grid-template-columns: minmax(360px, 420px) 1fr;
+  grid-template-columns: var(--input-panel-width) 6px minmax(0, 1fr);
+}
+
+.app-shell.resizing {
+  cursor: col-resize;
+  user-select: none;
+}
+
+.app-shell.resizing .input-panel,
+.app-shell.resizing .workbench {
+  pointer-events: none;
+}
+
+.panel-resizer {
+  cursor: col-resize;
+  background: #d8e0e4;
+  position: relative;
+  user-select: none;
+  touch-action: none;
+  transition: background 0.15s;
+}
+
+.panel-resizer::after {
+  content: "";
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  width: 2px;
+  height: 36px;
+  transform: translate(-50%, -50%);
+  border-radius: 2px;
+  background: #9aa9b1;
+}
+
+.panel-resizer:hover,
+.app-shell.resizing .panel-resizer {
+  background: #8fb6c9;
 }
 
 .input-panel {
@@ -782,6 +819,10 @@ h2 {
     max-height: none;
     border-right: 0;
     border-bottom: 1px solid #d8e0e4;
+  }
+
+  .panel-resizer {
+    display: none;
   }
 
   .summary-strip {
