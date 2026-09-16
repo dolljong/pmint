@@ -269,6 +269,17 @@ h2 {
   grid-template-columns: 1fr 0.9fr 0.9fr 0.9fr 0.9fr 0.9fr 34px;
 }
 
+.demand-table input[type="number"] {
+  -moz-appearance: textfield;
+  appearance: textfield;
+}
+
+.demand-table input[type="number"]::-webkit-outer-spin-button,
+.demand-table input[type="number"]::-webkit-inner-spin-button {
+  -webkit-appearance: none;
+  margin: 0;
+}
+
 .table-head {
   color: #6d7a81;
   font-size: 12px;
