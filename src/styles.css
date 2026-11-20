@@ -796,6 +796,24 @@ h2 {
   padding: 0 12px;
 }
 
+.field-note {
+  margin: 6px 0 0;
+  font-size: 12px;
+  line-height: 1.5;
+  color: #8a5a00;
+}
+
+.link-button {
+  min-height: 0;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: #216174;
+  font-size: 12px;
+  text-decoration: underline;
+  cursor: pointer;
+}
+
 .report-body {
   padding: 14px;
   border: 1px solid #e1e7ea;

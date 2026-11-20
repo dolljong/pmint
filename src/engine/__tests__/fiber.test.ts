@@ -1,8 +1,8 @@
 import { describe, expect, it } from "vitest";
-import { rectangleRings } from "../geometry";
+import { axisNormal, rectangleRings, sectionProjectionRange } from "../geometry";
 import { generateRectangleRebars } from "../rebarLayout";
 import { designCodes } from "../designCodes";
-import { sectionResponse } from "../section";
+import { fiberBandSlices, referenceConcreteStress, sectionResponse } from "../section";
 import { parabolicRectangularLaw, parabolicRectangularStress } from "../concreteLaw";
 import { computeSurface } from "../surface";
 import { ec2Exponent, ec2BiaxialCheck } from "../simplified";
@@ -175,5 +175,31 @@ describe("EC2 5.8.9 지수법", () => {
     const surface = computeSurface(section, materials, { designCode: "bridge_lsd", thetaSteps: 36, cSteps: 40 })!;
     const result = ec2BiaxialCheck(surface, surface.pn0 * 0.3, 100, 80, { circular: true });
     expect(result!.exponent).toBe(2);
+  });
+});
+
+describe("파이버 적분의 ecu", () => {
+  // fck 80 의 포물선-직선 표 ecu 는 0.0029 인데 입력은 0.003 이다.
+  const high: MaterialSet = { concrete: { fc: 80, ecu: 0.003 }, steel: { fy: 500, es: 200000 } };
+  const code = designCodes.kds_strength;
+  const theta = Math.PI / 3;
+  const c = 400;
+
+  it("콘크리트 밴드와 철근이 입력 ecu 의 같은 변형률 평면을 쓴다", () => {
+    expect(parabolicRectangularLaw(80).ecu).toBeCloseTo(0.0029, 9);
+    const { nx, ny } = axisNormal(theta);
+    const { sMax } = sectionProjectionRange(section.rings, nx, ny);
+    const plane = (s: number) => high.concrete.ecu * (1 - (sMax - s) / c);
+
+    const bands = fiberBandSlices(
+      section.rings, nx, ny, sMax, c, referenceConcreteStress(high, code, "fiber"), 80, high.concrete.ecu, 60,
+    );
+    expect(bands.length).toBeGreaterThan(0);
+    for (const band of bands) {
+      expect(band.strain).toBeCloseTo(plane(band.centroid.x * nx + band.centroid.y * ny), 12);
+    }
+
+    const response = sectionResponse(section, high, code, { theta, c }, { transverseReinforcement: "tie", method: "fiber" });
+    for (const bar of response.bars) expect(bar.strain).toBeCloseTo(plane(bar.s), 12);
   });
 });

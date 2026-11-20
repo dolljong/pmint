@@ -36,6 +36,7 @@ import {
   type SurfacePoint,
 } from "./engine/surface";
 import { fiberBandSlices, referenceConcreteStress } from "./engine/section";
+import { parabolicRectangularLaw } from "./engine/concreteLaw";
 import {
   checkDemand,
   expandDemands,
@@ -183,6 +184,7 @@ export default function App() {
   const [method, setMethod] = useState<IntegrationMethod>(designCodes.kds_strength.defaultIntegration);
   const [taperReduction, setTaperReduction] = useState(false);
   const [showBands, setShowBands] = useState(false);
+  const tableEcu = parabolicRectangularLaw(materials.concrete.fc).ecu;
   const [reportVisible, setReportVisible] = useState(false);
   const [selectedDemandId, setSelectedDemandId] = useState<string | undefined>("D1");
   const [thetaDeg, setThetaDeg] = useState(90);
@@ -615,6 +617,16 @@ export default function App() {
             <label>fy(MPa)<input type="number" value={materials.steel.fy} onChange={(e) => setMaterials({ ...materials, steel: { ...materials.steel, fy: readNumber(e.target.value) } })} /></label>
             <label>Es(MPa)<input type="number" value={materials.steel.es} onChange={(e) => setMaterials({ ...materials, steel: { ...materials.steel, es: readNumber(e.target.value) } })} /></label>
           </div>
+          {method === "fiber" && Math.abs(materials.concrete.ecu - tableEcu) > 1e-9 && (
+            <p className="field-note">
+              파이버 적분: 입력 ecu = {strain(materials.concrete.ecu)} 를 콘크리트·철근 모두에 씁니다.
+              fck {fmt(materials.concrete.fc)} 의 포물선-직선 표 값은 {strain(tableEcu)} 입니다.{" "}
+              <button type="button" className="link-button"
+                onClick={() => setMaterials({ ...materials, concrete: { ...materials.concrete, ecu: tableEcu } })}>
+                표 값 적용
+              </button>
+            </p>
+          )}
           <select value={designCode} onChange={(e) => changeDesignCode(e.target.value as DesignCodeId)}>
             {Object.values(designCodes).map((code) => <option key={code.id} value={code.id}>{code.label}</option>)}
           </select>
@@ -863,7 +875,7 @@ function SectionSvg({
     if (!Number.isFinite(sMax)) return undefined;
     const peak = referenceConcreteStress(surface.materials, surface.code, "fiber");
     const list = fiberBandSlices(
-      rings, nx, ny, sMax, c, peak, surface.materials.concrete.fc, surface.integration.fiberBands ?? 60,
+      rings, nx, ny, sMax, c, peak, surface.materials.concrete.fc, surface.materials.concrete.ecu, surface.integration.fiberBands ?? 60,
     );
     return list.length ? { list, peak } : undefined;
   }, [showBands, surface, rings, nx, ny, c]);

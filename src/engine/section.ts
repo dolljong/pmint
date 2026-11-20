@@ -223,6 +223,8 @@ export function sectionResponse(
           // 정점응력 = alpha_cc · fcd. 등가블록의 eta 는 곱하지 않는다(referenceConcreteStress 참조).
           concreteStress,
           materials.concrete.fc,
+          // 콘크리트 밴드와 철근이 같은 평면 변형률을 쓰도록 입력 ecu 하나로 통일한다.
+          materials.concrete.ecu,
           reference,
           options.fiberBands ?? 60,
         )
@@ -532,13 +534,14 @@ function integrateFiber(
   c: number,
   peakStress: number,
   fck: number,
+  ecu: number,
   reference: Point,
   bands: number,
 ): ConcreteIntegral {
   let force = 0;
   let mx = 0;
   let my = 0;
-  for (const band of fiberBandSlices(rings, nx, ny, sMax, c, peakStress, fck, bands)) {
+  for (const band of fiberBandSlices(rings, nx, ny, sMax, c, peakStress, fck, ecu, bands)) {
     const f = (band.stress * band.area) / 1000;
     force += f;
     mx += (f * (band.centroid.y - reference.y)) / 1000;
@@ -561,6 +564,9 @@ export interface FiberBand {
 /**
  * 파이버 적분의 밴드 분할. integrateFiber 와 단면 뷰의 밴드 표시가 같은 결과를 쓴다.
  * 압축영역(중립축 위)을 법선방향으로 등간격 n 개로 자르고 밴드 도심 변형률로 응력을 준다.
+ *
+ * ecu 는 철근 변형률과 같은 입력값(materials.concrete.ecu)이다. fck 표의 ecu 를 따로 쓰면
+ * 콘크리트와 철근이 서로 다른 변형률 평면을 갖게 된다. fck 로는 곡선 형상(eco, n)만 정한다.
  */
 export function fiberBandSlices(
   rings: Ring[],
@@ -570,6 +576,7 @@ export function fiberBandSlices(
   c: number,
   peakStress: number,
   fck: number,
+  ecu: number,
   bands: number,
 ): FiberBand[] {
   const law = parabolicRectangularLaw(fck);
@@ -595,7 +602,7 @@ export function fiberBandSlices(
     const centroid = sectionCentroid(slice);
     const s = project(centroid, nx, ny);
     // 순압축(c = Infinity)은 전 단면 균일 ecu.
-    const strain = finiteC ? law.ecu * (1 - (sMax - s) / c) : law.ecu;
+    const strain = finiteC ? ecu * (1 - (sMax - s) / c) : ecu;
     const stress = parabolicRectangularStress(strain, peakStress, law);
     result.push({ slice, area, centroid, strain, stress });
   }

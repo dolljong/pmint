@@ -131,8 +131,10 @@ export function buildReport(input: ReportInput): string {
     `        압축영역 적분 : ${method === "fiber" ? "포물선-직선 (파이버)" : "등가직사각형 응력블록"}`,
     ...(method === "fiber"
       ? [
-          `        f-e 곡선계수  : n = ${fmt(law.n)}, eco = ${strain(law.ec0)}, ecu = ${strain(law.ecu)}` +
+          `        f-e 곡선계수  : n = ${fmt(law.n)}, eco = ${strain(law.ec0)}` +
             `,  정점응력 = ${fmt(referenceConcreteStress(materials, code, method))} MPa`,
+          `                        ecu = ${strain(materials.concrete.ecu)} (입력값, 콘크리트·철근 공통)` +
+            (Math.abs(materials.concrete.ecu - law.ecu) > 1e-9 ? `  ※ fck 표 값 ${strain(law.ecu)} 과 다름` : ""),
         ]
       : [`        등가응력블록  : 0.85*eta = ${fmt(block.alpha)}, beta1 = ${fmt(block.beta)}`]),
     `        극한변형률    : ecu = ${strain(materials.concrete.ecu)},  ey = ${strain(materials.steel.fy / materials.steel.es)}`,
@@ -414,6 +416,7 @@ function capacityFiberBands(surface: InteractionSurface, parts: SectionResponse)
     na.c,
     referenceConcreteStress(surface.materials, surface.code, "fiber"),
     surface.materials.concrete.fc,
+    surface.materials.concrete.ecu,
     surface.integration.fiberBands ?? 60,
   );
 }
