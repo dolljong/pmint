@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useState, type CSSProperties, type Dispatch, type PointerEvent as ReactPointerEvent, type SetStateAction } from "react";
 import {
+  BookOpen,
   Circle,
   ClipboardCopy,
   CloudDownload,
@@ -488,9 +489,14 @@ export default function App() {
             <p className="eyebrow">RC Section</p>
             <h1>2축 P-M 상관도</h1>
           </div>
-          <button className="icon-button" title="예제 초기화" onClick={resetAll}>
-            <RotateCcw size={18} />
-          </button>
+          <div className="header-actions">
+            <button className="report-button" title="P-M 상관도 작도 원리 (1축/2축)" onClick={() => { window.location.hash = "theory"; }}>
+              <BookOpen size={16} />원리
+            </button>
+            <button className="icon-button" title="예제 초기화" onClick={resetAll}>
+              <RotateCcw size={18} />
+            </button>
+          </div>
         </header>
 
         <div className="preset-row">

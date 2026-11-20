@@ -1209,3 +1209,503 @@ h2 {
 
 .muted { color: #8a969b; font-size: 12px; }
 .small { font-size: 11px; }
+
+/* ---------- 헤더 버튼 묶음 ---------- */
+.header-actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+/* ---------- 작도 원리 페이지 (TheoryPage) ---------- */
+.th-page {
+  min-height: 100vh;
+  background: #eef2f3;
+}
+
+.th-top {
+  position: sticky;
+  top: 0;
+  z-index: 5;
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  padding: 10px 24px;
+  background: #ffffffee;
+  border-bottom: 1px solid #d8e0e4;
+  backdrop-filter: blur(6px);
+}
+
+.th-top-title {
+  font-weight: 600;
+  color: #445159;
+  font-size: 14px;
+}
+
+.th-article {
+  max-width: 1120px;
+  margin: 0 auto;
+  padding: 28px 24px 80px;
+  line-height: 1.7;
+  font-size: 15px;
+}
+
+.th-article h1 {
+  font-size: 28px;
+  margin-bottom: 12px;
+}
+
+.th-lead {
+  font-size: 16px;
+  color: #34434b;
+  max-width: 860px;
+}
+
+.th-toc {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin: 18px 0 8px;
+}
+
+.th-toc a {
+  padding: 6px 12px;
+  border: 1px solid #c9d2d7;
+  border-radius: 999px;
+  background: #ffffff;
+  color: #216174;
+  text-decoration: none;
+  font-size: 13px;
+}
+
+.th-toc a:hover {
+  border-color: #216174;
+}
+
+.th-section {
+  background: #ffffff;
+  border: 1px solid #d8e0e4;
+  border-radius: 10px;
+  padding: 22px 26px;
+  margin-top: 22px;
+  scroll-margin-top: 64px;
+}
+
+.th-section h2 {
+  font-size: 20px;
+  margin-bottom: 8px;
+}
+
+.th-section h3 {
+  font-size: 16px;
+  margin: 22px 0 6px;
+  color: #216174;
+}
+
+.th-section p {
+  margin: 6px 0;
+  max-width: 900px;
+}
+
+.th-list {
+  padding-left: 22px;
+  margin: 8px 0;
+}
+
+.th-list li {
+  margin: 4px 0;
+}
+
+.th-formula {
+  margin: 10px 0;
+  padding: 12px 16px;
+  background: #f4f7f8;
+  border-left: 3px solid #216174;
+  border-radius: 4px;
+  font-family: "Cascadia Mono", Consolas, "D2Coding", monospace;
+  font-size: 13px;
+  line-height: 1.65;
+  white-space: pre-wrap;
+  overflow-x: auto;
+}
+
+.th-table {
+  border-collapse: collapse;
+  margin: 10px 0;
+  font-size: 14px;
+  width: 100%;
+  max-width: 900px;
+}
+
+.th-table th,
+.th-table td {
+  border: 1px solid #d8e0e4;
+  padding: 6px 10px;
+  text-align: left;
+  vertical-align: top;
+}
+
+.th-table th {
+  background: #f4f7f8;
+  color: #445159;
+}
+
+.th-callout {
+  margin: 12px 0;
+  padding: 12px 16px;
+  border: 1px solid #e5c6a0;
+  background: #fdf6ec;
+  border-radius: 6px;
+  max-width: 900px;
+}
+
+.th-note {
+  color: #51616a;
+  font-size: 14px;
+}
+
+.th-key {
+  font-weight: 600;
+}
+
+.th-key.theta {
+  color: #c27b30;
+}
+
+.th-key.alpha {
+  color: #6b5fb5;
+}
+
+.th-demo {
+  margin: 12px 0 8px;
+  padding: 16px;
+  border: 1px solid #d8e0e4;
+  border-radius: 8px;
+  background: #fafcfc;
+}
+
+.th-controls {
+  display: grid;
+  gap: 10px;
+  margin-bottom: 12px;
+}
+
+.th-slider {
+  display: grid;
+  grid-template-columns: 120px minmax(0, 1fr) 190px;
+  align-items: center;
+  gap: 12px;
+  font-size: 13px;
+  color: #34434b;
+}
+
+.th-slider input {
+  padding: 0;
+}
+
+.th-value {
+  font-variant-numeric: tabular-nums;
+  font-weight: 600;
+}
+
+.th-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.th-chips button {
+  min-height: 28px;
+  padding: 0 10px;
+  font-size: 12px;
+}
+
+.th-demo-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(340px, 1fr));
+  gap: 12px;
+}
+
+.th-figure {
+  margin: 0;
+  background: #ffffff;
+  border: 1px solid #e2e8eb;
+  border-radius: 6px;
+  padding: 8px;
+}
+
+.th-figure figcaption {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  font-size: 12px;
+  color: #61717a;
+  padding: 4px 4px 0;
+}
+
+.th-mini-range {
+  width: 120px;
+  padding: 0;
+}
+
+.th-readout {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));
+  gap: 6px;
+  margin-top: 12px;
+}
+
+.th-readout-item {
+  display: grid;
+  gap: 2px;
+  padding: 6px 10px;
+  background: #ffffff;
+  border: 1px solid #e2e8eb;
+  border-radius: 6px;
+}
+
+.th-readout-item span {
+  font-size: 11px;
+  color: #61717a;
+}
+
+.th-readout-item strong {
+  font-size: 14px;
+  font-variant-numeric: tabular-nums;
+}
+
+.th-svg {
+  width: 100%;
+  height: auto;
+  display: block;
+  font-family: inherit;
+}
+
+.th-svg-title {
+  font-size: 12px;
+  font-weight: 600;
+  fill: #445159;
+}
+
+.th-sec {
+  fill: #e9eef0;
+  stroke: #354b54;
+  stroke-width: 1.5;
+}
+
+.th-block {
+  fill: #9b3d3d33;
+  stroke: #9b3d3d;
+  stroke-width: 1;
+}
+
+.th-na {
+  stroke: #1d2429;
+  stroke-width: 1.4;
+  stroke-dasharray: 6 4;
+}
+
+.th-na-label,
+.th-small {
+  font-size: 11px;
+  fill: #445159;
+}
+
+.th-small.theta {
+  fill: #c27b30;
+  font-weight: 600;
+}
+
+.th-small.alpha {
+  fill: #6b5fb5;
+  font-weight: 600;
+}
+
+.th-small.cap {
+  fill: #8b5a2b;
+}
+
+.th-bar {
+  stroke: #ffffff;
+  stroke-width: 1;
+}
+
+.th-bar.comp {
+  fill: #9b3d3d;
+}
+
+.th-bar.tens {
+  fill: #216174;
+}
+
+.th-dim line {
+  stroke: #445159;
+  stroke-width: 1;
+}
+
+.th-dim text {
+  font-size: 12px;
+  font-style: italic;
+  fill: #1d2429;
+}
+
+.th-axis {
+  stroke: #61717a;
+  stroke-width: 1.2;
+}
+
+.th-grid {
+  stroke: #e2e8eb;
+  stroke-width: 1;
+}
+
+.th-tick {
+  font-size: 10px;
+  fill: #61717a;
+}
+
+.th-axis-label {
+  font-size: 11px;
+  fill: #34434b;
+  font-weight: 600;
+}
+
+.th-strain {
+  fill: #c27b3022;
+  stroke: #c27b30;
+  stroke-width: 1.4;
+}
+
+.th-arrowhead {
+  fill: #445159;
+}
+
+.th-arrowhead.theta {
+  fill: #c27b30;
+}
+
+.th-arrowhead.alpha {
+  fill: #6b5fb5;
+}
+
+.th-force {
+  stroke-width: 2.4;
+}
+
+.th-force.conc,
+.th-force.comp {
+  stroke: #9b3d3d;
+}
+
+.th-force.tens {
+  stroke: #216174;
+}
+
+.th-curve {
+  fill: none;
+  stroke-width: 2;
+}
+
+.th-curve.nominal {
+  stroke: #354b54;
+}
+
+.th-curve.nominal.fill {
+  fill: #21617414;
+}
+
+.th-curve.design {
+  stroke: #216174;
+  stroke-dasharray: 5 3;
+}
+
+.th-curve.alpha,
+.th-curve.alpha-line {
+  stroke: #6b5fb5;
+}
+
+.th-curve.theta-line {
+  stroke: #c27b30;
+  stroke-width: 2.2;
+}
+
+.th-cap {
+  stroke: #8b5a2b;
+  stroke-width: 1;
+  stroke-dasharray: 3 3;
+}
+
+.th-mark {
+  fill: #1d2429;
+}
+
+.th-current {
+  fill: #c27b30;
+  stroke: #ffffff;
+  stroke-width: 2;
+}
+
+.th-current.design {
+  fill: #216174;
+}
+
+.th-ecc {
+  stroke: #c27b30;
+  stroke-width: 1;
+  stroke-dasharray: 4 3;
+}
+
+.th-vec {
+  stroke-width: 2.2;
+}
+
+.th-vec.theta {
+  stroke: #c27b30;
+}
+
+.th-vec.alpha {
+  stroke: #6b5fb5;
+}
+
+.th-vec.dashed {
+  stroke-dasharray: 6 4;
+  stroke-width: 1.5;
+}
+
+.th-wire {
+  fill: none;
+  stroke: #9bacb4;
+  stroke-width: 0.8;
+}
+
+.th-wire.level {
+  stroke: #7b8c95;
+}
+
+@media (max-width: 640px) {
+  .th-top {
+    padding: 8px 16px;
+  }
+
+  .th-article {
+    padding: 20px 16px 60px;
+  }
+
+  .th-section {
+    padding: 16px;
+  }
+
+  .th-slider {
+    grid-template-columns: 1fr;
+    gap: 4px;
+  }
+
+  .th-demo-grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+.th-mini-label {
+  margin-left: auto;
+}
