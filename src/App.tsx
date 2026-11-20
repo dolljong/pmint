@@ -35,7 +35,7 @@ import {
   type InteractionSurface,
   type SurfacePoint,
 } from "./engine/surface";
-import { referenceConcreteStress } from "./engine/section";
+import { fiberBandSlices, referenceConcreteStress } from "./engine/section";
 import {
   checkDemand,
   expandDemands,
@@ -84,6 +84,7 @@ interface SavedState {
   column: ColumnCondition;
   selectedDemandId?: string;
   taperReduction: boolean;
+  showBands?: boolean;
   showDesign: boolean;
   showSimplified: boolean;
   followDemand: boolean;
@@ -181,6 +182,7 @@ export default function App() {
   const [showSimplified, setShowSimplified] = useState(false);
   const [method, setMethod] = useState<IntegrationMethod>(designCodes.kds_strength.defaultIntegration);
   const [taperReduction, setTaperReduction] = useState(false);
+  const [showBands, setShowBands] = useState(false);
   const [reportVisible, setReportVisible] = useState(false);
   const [selectedDemandId, setSelectedDemandId] = useState<string | undefined>("D1");
   const [thetaDeg, setThetaDeg] = useState(90);
@@ -367,6 +369,7 @@ export default function App() {
     column,
     selectedDemandId,
     taperReduction,
+    showBands,
     showDesign,
     showSimplified,
     followDemand,
@@ -402,6 +405,7 @@ export default function App() {
     );
 
     setTaperReduction(Boolean(s.taperReduction));
+    setShowBands(Boolean(s.showBands));
     setShowDesign(s.showDesign ?? true);
     setShowSimplified(Boolean(s.showSimplified));
     setFollowDemand(s.followDemand ?? true);
@@ -677,6 +681,11 @@ export default function App() {
             EC2 3.1.7(3) 테이퍼 10% 저감
           </label>
           <label className="toggle">
+            <input type="checkbox" checked={showBands} disabled={method !== "fiber"}
+              onChange={(e) => setShowBands(e.target.checked)} />
+            밴드 보기 (파이버 적분 분할)
+          </label>
+          <label className="toggle">
             <input type="checkbox" checked={showSimplified} onChange={(e) => setShowSimplified(e.target.checked)} />
             간이법(Bresler / EC2 5.8.9) 대조
           </label>
@@ -700,7 +709,8 @@ export default function App() {
               <h2>단면 · 중립축</h2>
               <span>{rings.length} 링 / {rebars.length} 철근 / θ = {fmt(radToDeg(activeTheta))}°</span>
             </div>
-            <SectionSvg rings={rings} rebars={rebars} theta={activeTheta} c={selectedCheck?.capacity?.c} surface={surface} />
+            <SectionSvg rings={rings} rebars={rebars} theta={activeTheta} c={selectedCheck?.capacity?.c} surface={surface}
+              showBands={showBands && method === "fiber"} />
           </div>
 
           <div className="viewer">
@@ -795,12 +805,14 @@ function SectionSvg({
   theta,
   c,
   surface,
+  showBands = false,
 }: {
   rings: Ring[];
   rebars: Rebar[];
   theta: number;
   c?: number;
   surface?: InteractionSurface;
+  showBands?: boolean;
 }) {
   const frame = getFrame([...rings.flatMap((ring) => ring.points), ...rebars]);
   const { nx, ny } = axisNormal(theta);
@@ -825,15 +837,38 @@ function SectionSvg({
     };
   }, [rings, nx, ny, c, surface]);
 
+  // 파이버 밴드: 엔진(integrateFiber)과 같은 함수로 분할하므로 그림 = 계산.
+  const bands = useMemo(() => {
+    if (!showBands || !surface || rings.length === 0 || c === undefined || !(c > 0)) return undefined;
+    const { sMax } = sectionProjectionRange(rings, nx, ny);
+    if (!Number.isFinite(sMax)) return undefined;
+    const peak = referenceConcreteStress(surface.materials, surface.code, "fiber");
+    const list = fiberBandSlices(
+      rings, nx, ny, sMax, c, peak, surface.materials.concrete.fc, surface.integration.fiberBands ?? 60,
+    );
+    return list.length ? { list, peak } : undefined;
+  }, [showBands, surface, rings, nx, ny, c]);
+
   return (
     <div className="section-view">
       <svg className="section-svg" viewBox={`${frame.minX} ${frame.minY} ${frame.width} ${frame.height}`}>
         <g transform="scale(1 -1)">
           <path d={ringsToPath(rings)} fillRule="evenodd" className="concrete-shape" />
-          {na && na.compressed.length > 0 && (
+          {!bands && na && na.compressed.length > 0 && (
             <path d={ringsToPath(na.compressed)} fillRule="evenodd" className="stress-block-fill" />
           )}
-          {na && <AxisLine nx={nx} ny={ny} s={na.blockS} span={span} center={frameCenter} className="stress-block-edge" />}
+          {bands?.list.map((band, i) => (
+            <path
+              key={i}
+              d={ringsToPath(band.slice)}
+              fillRule="evenodd"
+              className="fiber-band"
+              style={{ fillOpacity: 0.12 + 0.68 * Math.max(0, Math.min(1, band.stress / bands.peak)) }}
+            >
+              <title>{`밴드 ${i + 1}/${bands.list.length}  ε = ${band.strain.toFixed(5)}  σ = ${band.stress.toFixed(2)} MPa  A = ${fmt(band.area)} mm²`}</title>
+            </path>
+          ))}
+          {!bands && na && <AxisLine nx={nx} ny={ny} s={na.blockS} span={span} center={frameCenter} className="stress-block-edge" />}
           {na && <AxisLine nx={nx} ny={ny} s={na.naS} span={span} center={frameCenter} className="neutral-axis-line" />}
 
           {rebars.map((bar) => (
@@ -854,7 +889,7 @@ function SectionSvg({
           )}
         </g>
       </svg>
-      <SectionLegend na={na} />
+      <SectionLegend na={na} bands={bands ? { count: bands.list.length, peak: bands.peak } : undefined} />
     </div>
   );
 }
@@ -865,7 +900,13 @@ function SectionSvg({
  * SVG 안의 <text> 로 넣으면 viewBox 가 단면 치수(mm)라서 글자 크기가 단면 크기에 좌우된다
  * (3000x4000 교각에서는 사실상 보이지 않는다). HTML 로 빼고 견본만 작은 SVG 로 그린다.
  */
-function SectionLegend({ na }: { na?: { naS: number; blockS: number; a: number; c: number } }) {
+function SectionLegend({
+  na,
+  bands,
+}: {
+  na?: { naS: number; blockS: number; a: number; c: number };
+  bands?: { count: number; peak: number };
+}) {
   return (
     <ul className="section-legend">
       <li>
@@ -873,16 +914,26 @@ function SectionLegend({ na }: { na?: { naS: number; blockS: number; a: number; 
         <span className="name">중립축 (N.A.)</span>
         <span className="desc">{na ? `c = ${fmt(na.c)} mm` : "변형률 0 인 선"}</span>
       </li>
-      <li>
-        <Swatch kind="line" className="stress-block-edge" />
-        <span className="name">등가응력블록 하단</span>
-        <span className="desc">{na ? `a = β₁c = ${fmt(na.a)} mm` : "a = β₁·c"}</span>
-      </li>
-      <li>
-        <Swatch kind="fill" className="stress-block-fill" />
-        <span className="name">압축영역</span>
-        <span className="desc">중공 공제됨</span>
-      </li>
+      {bands ? (
+        <li>
+          <Swatch kind="fill" className="fiber-band" />
+          <span className="name">파이버 밴드</span>
+          <span className="desc">{`${bands.count}개, 진하기 = σ/${bands.peak.toFixed(2)} MPa`}</span>
+        </li>
+      ) : (
+        <>
+          <li>
+            <Swatch kind="line" className="stress-block-edge" />
+            <span className="name">등가응력블록 하단</span>
+            <span className="desc">{na ? `a = β₁c = ${fmt(na.a)} mm` : "a = β₁·c"}</span>
+          </li>
+          <li>
+            <Swatch kind="fill" className="stress-block-fill" />
+            <span className="name">압축영역</span>
+            <span className="desc">중공 공제됨</span>
+          </li>
+        </>
+      )}
       <li>
         <Swatch kind="circle" className="centroid-marker" />
         <span className="name">기하 도심</span>

@@ -383,6 +383,14 @@ h2 {
   stroke-width: 2;
 }
 
+.fiber-band {
+  fill: #2f7f9a;
+  fill-opacity: 0.4;
+  stroke: #216174;
+  stroke-width: 0.6;
+  stroke-opacity: 0.7;
+}
+
 .stress-block-edge {
   stroke: #216174;
   stroke-width: 2;
@@ -1029,6 +1037,7 @@ h2 {
  */
 .section-svg .concrete-shape,
 .section-svg .stress-block-fill,
+.section-svg .fiber-band,
 .section-svg .stress-block-edge,
 .section-svg .neutral-axis-line,
 .section-svg .axis,
@@ -1085,6 +1094,7 @@ h2 {
   overflow: visible;
 }
 
+.swatch .fiber-band,
 .swatch .stress-block-fill {
   stroke-width: 1;
 }

@@ -535,21 +535,56 @@ function integrateFiber(
   reference: Point,
   bands: number,
 ): ConcreteIntegral {
+  let force = 0;
+  let mx = 0;
+  let my = 0;
+  for (const band of fiberBandSlices(rings, nx, ny, sMax, c, peakStress, fck, bands)) {
+    const f = (band.stress * band.area) / 1000;
+    force += f;
+    mx += (f * (band.centroid.y - reference.y)) / 1000;
+    my += (f * (band.centroid.x - reference.x)) / 1000;
+  }
+  return { force, mx, my, taperApplied: false };
+}
+
+export interface FiberBand {
+  /** 밴드 단면(중공 공제된 링들) */
+  slice: Ring[];
+  area: number;
+  centroid: Point;
+  /** 밴드 도심의 변형률 */
+  strain: number;
+  /** 밴드 도심 응력 (MPa) */
+  stress: number;
+}
+
+/**
+ * 파이버 적분의 밴드 분할. integrateFiber 와 단면 뷰의 밴드 표시가 같은 결과를 쓴다.
+ * 압축영역(중립축 위)을 법선방향으로 등간격 n 개로 자르고 밴드 도심 변형률로 응력을 준다.
+ */
+export function fiberBandSlices(
+  rings: Ring[],
+  nx: number,
+  ny: number,
+  sMax: number,
+  c: number,
+  peakStress: number,
+  fck: number,
+  bands: number,
+): FiberBand[] {
   const law = parabolicRectangularLaw(fck);
   const finiteC = Number.isFinite(c);
   const sLow = finiteC ? sMax - c : Number.NEGATIVE_INFINITY;
   const region = finiteC ? clipRingsHalfPlane(rings, nx, ny, sLow) : rings;
-  if (region.length === 0) return { force: 0, mx: 0, my: 0, taperApplied: false };
+  if (region.length === 0) return [];
 
   const { sMin: regionMin, sMax: regionMax } = sectionProjectionRange(region, nx, ny);
   const span = regionMax - regionMin;
-  if (!(span > 0)) return { force: 0, mx: 0, my: 0, taperApplied: false };
+  if (!(span > 0)) return [];
 
   const n = Math.max(4, Math.round(bands));
   const step = span / n;
-  let force = 0;
-  let mx = 0;
-  let my = 0;
+  const result: FiberBand[] = [];
 
   for (let i = 0; i < n; i += 1) {
     const lo = regionMin + step * i;
@@ -557,18 +592,14 @@ function integrateFiber(
     const slice = clipRingsBand(region, nx, ny, lo, hi);
     const area = sectionArea(slice);
     if (Math.abs(area) < 1e-12) continue;
-    const centroidPoint = sectionCentroid(slice);
-    const s = project(centroidPoint, nx, ny);
+    const centroid = sectionCentroid(slice);
+    const s = project(centroid, nx, ny);
     // 순압축(c = Infinity)은 전 단면 균일 ecu.
     const strain = finiteC ? law.ecu * (1 - (sMax - s) / c) : law.ecu;
     const stress = parabolicRectangularStress(strain, peakStress, law);
-    const f = (stress * area) / 1000;
-    force += f;
-    mx += (f * (centroidPoint.y - reference.y)) / 1000;
-    my += (f * (centroidPoint.x - reference.x)) / 1000;
+    result.push({ slice, area, centroid, strain, stress });
   }
-
-  return { force, mx, my, taperApplied: false };
+  return result;
 }
 
 /**
