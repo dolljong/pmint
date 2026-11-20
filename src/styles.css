@@ -796,18 +796,38 @@ h2 {
   padding: 0 12px;
 }
 
-.report-panel pre {
-  margin: 0;
+.report-body {
   padding: 14px;
   border: 1px solid #e1e7ea;
   border-radius: 6px;
   background: #f7fafb;
+  max-height: 560px;
+  overflow: auto;
+}
+
+.report-panel pre {
+  margin: 0;
   color: #243037;
   white-space: pre-wrap;
   line-height: 1.6;
-  max-height: 560px;
-  overflow: auto;
   font-size: 13px;
+}
+
+.report-fold {
+  margin: 2px 0 2px 96px;
+}
+
+.report-fold > summary {
+  cursor: pointer;
+  color: #216174;
+  font-size: 13px;
+  line-height: 1.6;
+}
+
+/* 밴드 표는 열을 맞춰야 하므로 줄바꿈하지 않고 가로 스크롤한다. */
+.report-fold > pre {
+  white-space: pre;
+  overflow-x: auto;
 }
 
 .metric {

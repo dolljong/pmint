@@ -54,7 +54,7 @@ import type {
   ShapeMode,
   TransverseReinforcement,
 } from "./engine/types";
-import { buildReport, fmt, radToDeg, sci, strain, type ReportColumn } from "./report";
+import { buildReport, fmt, parseReportFolds, radToDeg, sci, strain, type ReportColumn } from "./report";
 import { serverOpen, serverSave } from "./serverStore";
 
 const PANEL_WIDTH_KEY = "pmint.inputPanelWidth";
@@ -788,10 +788,29 @@ export default function App() {
             <h2>검토보고서</h2>
             <button className="report-button" onClick={() => setReportVisible((v) => !v)}><FileText size={16} />검토보고서보기</button>
           </div>
-          {reportVisible && <pre>{report}</pre>}
+          {reportVisible && <ReportBody report={report} />}
         </div>
       </section>
     </main>
+  );
+}
+
+/** 보고서 평문을 그리되, 접기 표지 구간(밴드 표 등)은 <details> 로 접어 둔다. */
+function ReportBody({ report }: { report: string }) {
+  const segments = useMemo(() => parseReportFolds(report), [report]);
+  return (
+    <div className="report-body">
+      {segments.map((segment, i) =>
+        segment.kind === "text" ? (
+          <pre key={i}>{segment.text}</pre>
+        ) : (
+          <details key={i} className="report-fold">
+            <summary>{segment.title}</summary>
+            <pre>{segment.text}</pre>
+          </details>
+        ),
+      )}
+    </div>
   );
 }
 

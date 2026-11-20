@@ -18,7 +18,7 @@ import {
 import { parabolicRectangularLaw } from "./engine/concreteLaw";
 import { breslerReciprocal, ec2BiaxialCheck } from "./engine/simplified";
 import { capacityAt } from "./engine/solve";
-import { referenceConcreteStress, type SectionResponse } from "./engine/section";
+import { fiberBandSlices, referenceConcreteStress, type FiberBand, type SectionResponse } from "./engine/section";
 import type { InteractionSurface } from "./engine/surface";
 import type { MaterialSet, Rebar, Ring } from "./engine/types";
 
@@ -36,6 +36,41 @@ export interface ReportInput {
   rings: Ring[];
   rebars: Rebar[];
   showSimplified: boolean;
+}
+
+/**
+ * 보고서 안의 접는 구간 표시. 보고서는 평문 문자열이므로 줄 단위 표지로 구간을 남기고,
+ * 화면은 parseReportFolds 로 나눠 <details> 로 그린다.
+ */
+export const REPORT_FOLD_OPEN = "\u001e[접기] ";
+export const REPORT_FOLD_CLOSE = "\u001e[/접기]";
+
+export type ReportSegment = { kind: "text"; text: string } | { kind: "fold"; title: string; text: string };
+
+export function parseReportFolds(report: string): ReportSegment[] {
+  const segments: ReportSegment[] = [];
+  let buffer: string[] = [];
+  let fold: { title: string; lines: string[] } | undefined;
+  const flush = () => {
+    if (buffer.length > 0) segments.push({ kind: "text", text: buffer.join("\n") });
+    buffer = [];
+  };
+  for (const line of report.split("\n")) {
+    if (!fold && line.startsWith(REPORT_FOLD_OPEN)) {
+      flush();
+      fold = { title: line.slice(REPORT_FOLD_OPEN.length), lines: [] };
+    } else if (fold && line === REPORT_FOLD_CLOSE) {
+      segments.push({ kind: "fold", title: fold.title, text: fold.lines.join("\n") });
+      fold = undefined;
+    } else if (fold) {
+      fold.lines.push(line);
+    } else {
+      buffer.push(line);
+    }
+  }
+  if (fold) buffer.push(...fold.lines);
+  flush();
+  return segments;
 }
 
 export function buildReport(input: ReportInput): string {
@@ -163,10 +198,24 @@ export function buildReport(input: ReportInput): string {
     "[산출식]",
     "- 중립축 법선 n = (cos θ, sin θ) 를 압축측으로 두고, s = x·nx + y·ny 를 법선방향 좌표로 한다.",
     "- 최압축 연단 sMax 로부터 깊이 c 를 잡아 변형률 ε(x,y) = ecu · (s - (sMax - c)) / c 를 준다.",
-    "- 압축영역은 링별로 반평면 { s >= sMax - beta1·c } 절단 후 부호면적 합산으로 구한다.",
-    "  (외곽 링 CCW(+), 중공 링 CW(-) -> (외곽 ∩ HP) \\ (중공 ∩ HP) 가 자동 성립)",
-    "- 콘크리트 압축력 Cc = (0.85·eta)·fcd·Ac,comp / 1000  [kN]",
-    "- 철근 응력 fs = clamp(Es·es, -fyd, +fyd), 압축측 철근은 콘크리트 치환 공제 (fs - 0.85·eta·fcd)",
+    ...(method === "fiber"
+      ? [
+          "- 압축영역은 링별로 반평면 { s >= sMax - c } (중립축 위 전체) 절단 후 부호면적 합산으로 구한다.",
+          "  (외곽 링 CCW(+), 중공 링 CW(-) -> (외곽 ∩ HP) \\ (중공 ∩ HP) 가 자동 성립)",
+          `- 압축영역을 법선방향으로 등간격 N = ${Math.max(4, Math.round(surface.integration.fiberBands ?? 60))} 개 밴드로 나누고, 밴드 i 의 면적 A_i, 도심 (x_i, y_i), s_i 를 구한다.`,
+          "- 밴드 도심 변형률 ε_i = ecu · (1 - (sMax - s_i) / c)",
+          "- 밴드 응력 (포물선-직선) σ_i = fc' · [1 - (1 - ε_i/eco)^n]  (ε_i < eco),   σ_i = fc'  (eco <= ε_i <= ecu)",
+          "  fc' = 정점응력 (재료 항목 참조)",
+          "- 콘크리트 압축력 Cc = Σ σ_i·A_i / 1000  [kN]",
+          "- Mcx = Σ F_i·(y_i - y_pc)/1000,  Mcy = Σ F_i·(x_i - x_pc)/1000   [kN-m]   (밴드별 값은 ⑥의 밴드 표)",
+          "- 철근 응력 fs = clamp(Es·es, -fyd, +fyd), 압축측 철근은 콘크리트 치환 공제 (fs - fc')",
+        ]
+      : [
+          "- 압축영역은 링별로 반평면 { s >= sMax - beta1·c } 절단 후 부호면적 합산으로 구한다.",
+          "  (외곽 링 CCW(+), 중공 링 CW(-) -> (외곽 ∩ HP) \\ (중공 ∩ HP) 가 자동 성립)",
+          "- 콘크리트 압축력 Cc = (0.85·eta)·fcd·Ac,comp / 1000  [kN]",
+          "- 철근 응력 fs = clamp(Es·es, -fyd, +fyd), 압축측 철근은 콘크리트 치환 공제 (fs - 0.85·eta·fcd)",
+        ]),
     "- Pn = Cc + Σ Fs,  Mnx = Σ F·(y - y_pc)/1000,  Mny = Σ F·(x - x_pc)/1000   [kN-m]",
     "- 모멘트 기준점은 **소성중심** (x_pc, y_pc) 이다 (KDS 14 20 20).",
     "- 편심벡터 방향 α_e = atan2(Mnx, Mny). 일반 단면에서 α_e ≠ θ 이며, 이 차이가 2축 효과다.",
@@ -275,18 +324,23 @@ function buildDemandReview(index: number, demand: DemandInput, input: ReportInpu
   const alphaDeg = radToDeg(capacity.alphaE);
   const gap = Math.abs(signedDeg(thetaDeg - alphaDeg));
   const parts = capacity.response;
+  const fiber = (surface.integration.method ?? surface.code.defaultIntegration) === "fiber";
+  const fiberBands = fiber ? capacityFiberBands(surface, parts) : undefined;
+  const compressedArea = fiberBands ? fiberBands.reduce((sum, band) => sum + band.area, 0) : parts.concrete.area;
 
   lines.push(
     `            중립축 각도  : theta   = ${pad(fmt(thetaDeg), 10)} deg`,
     `            중립축 깊이  : c       = ${pad(fmt(capacity.c), 10)} mm  (h_theta = ${fmt(parts.neutralAxis.depth)} mm)`,
-    `            등가블록깊이 : a = beta1*c = ${pad(fmt(parts.neutralAxis.a), 10)} mm`,
+    fiber
+      ? "            압축영역     : 중립축 위 전 깊이 c (포물선-직선 파이버 적분, 등가블록 미사용)"
+      : `            등가블록깊이 : a = beta1*c = ${pad(fmt(parts.neutralAxis.a), 10)} mm`,
     `            도달 편심방향: alpha_e = ${pad(fmt(alphaDeg), 10)} deg   (목표 ${fmt(radToDeg(d.alphaE))} deg)`,
     `            ★ theta 와 alpha_e 의 차이 = ${fmt(gap)} deg  <- 2축 효과의 크기`,
     `            반복 횟수    : ${capacity.iterations}`,
     "",
     "          ⑥ 단면력 분해",
     "",
-    `            Cc  = ${pad(fmt(parts.concrete.force), 10)} kN     (압축면적 ${sci(parts.concrete.area)} mm2)`,
+    `            Cc  = ${pad(fmt(parts.concrete.force), 10)} kN     (압축면적 ${sci(compressedArea)} mm2)`,
     `            Cs  = ${pad(fmt(parts.steel.compressionForce), 10)} kN`,
     `            Tt  = ${pad(fmt(parts.steel.tensionForce), 10)} kN`,
     `            Pn  = Cc + Cs + Tt = ${fmt(parts.pn)} kN`,
@@ -295,6 +349,7 @@ function buildDemandReview(index: number, demand: DemandInput, input: ReportInpu
     `            Mcy = ${pad(fmt(parts.concrete.my), 10)},  Msy = ${pad(fmt(parts.steel.compressionMy), 10)},  Mty = ${pad(fmt(parts.steel.tensionMy), 10)} kN-m`,
     `            Mnx = ${pad(fmt(parts.mnx), 10)} kN-m,  Mny = ${pad(fmt(parts.mny), 10)} kN-m`,
     "",
+    ...(fiberBands ? fiberBandTable(surface, parts, fiberBands) : []),
     "          ⑦ 변형률 및 지배단면",
     "",
     `            최외단 인장철근 : ${extremeBarLabel(parts)}`,
@@ -346,6 +401,58 @@ function buildDemandReview(index: number, demand: DemandInput, input: ReportInpu
   }
 
   return lines.join("\n");
+}
+
+/** 해(θ, c)에서 엔진과 같은 함수로 밴드를 다시 나눈다. */
+function capacityFiberBands(surface: InteractionSurface, parts: SectionResponse): FiberBand[] {
+  const na = parts.neutralAxis;
+  return fiberBandSlices(
+    surface.section.rings,
+    na.nx,
+    na.ny,
+    na.sMax,
+    na.c,
+    referenceConcreteStress(surface.materials, surface.code, "fiber"),
+    surface.materials.concrete.fc,
+    surface.integration.fiberBands ?? 60,
+  );
+}
+
+function fiberBandTable(surface: InteractionSurface, parts: SectionResponse, bands: FiberBand[]): string[] {
+  const ref = surface.reference;
+  const sMax = parts.neutralAxis.sMax;
+  let sumA = 0;
+  let sumF = 0;
+  let sumMx = 0;
+  let sumMy = 0;
+  const rows = bands.map((band, i) => {
+    const f = (band.stress * band.area) / 1000;
+    const mx = (f * (band.centroid.y - ref.y)) / 1000;
+    const my = (f * (band.centroid.x - ref.x)) / 1000;
+    sumA += band.area;
+    sumF += f;
+    sumMx += mx;
+    sumMy += my;
+    const depth = sMax - (band.centroid.x * parts.neutralAxis.nx + band.centroid.y * parts.neutralAxis.ny);
+    return (
+      `            ${pad(String(i + 1), 4)} ${pad(fmt(depth), 9)} ${pad(sci(band.area), 11)} ${pad(fmt(band.centroid.x), 9)} ${pad(fmt(band.centroid.y), 9)}` +
+      ` ${pad(strain(band.strain), 9)} ${pad(band.stress.toFixed(3), 9)} ${pad(fmt(f), 10)} ${pad(fmt(mx), 10)} ${pad(fmt(my), 10)}`
+    );
+  });
+  const rule = `            ${"-".repeat(104)}`;
+  return [
+    `            [콘크리트 파이버 밴드 적분]  N = ${bands.length},  fc' = ${fmt(referenceConcreteStress(surface.materials, surface.code, "fiber"))} MPa,  c = ${fmt(parts.neutralAxis.c)} mm`,
+    `            ΣF = ${fmt(sumF)} kN (= Cc),  ΣMx = ${fmt(sumMx)} kN-m (= Mcx),  ΣMy = ${fmt(sumMy)} kN-m (= Mcy)`,
+    `${REPORT_FOLD_OPEN}밴드 표 (${bands.length}개)`,
+    "            d = 최압축 연단에서 밴드 도심까지 깊이,  F = σ·A/1000,  Mx = F·(y - y_pc)/1000,  My = F·(x - x_pc)/1000",
+    `            ${pad("No", 4)} ${pad("d(mm)", 9)} ${pad("A(mm2)", 11)} ${pad("x(mm)", 9)} ${pad("y(mm)", 9)} ${pad("ε", 9)} ${pad("σ(MPa)", 9)} ${pad("F(kN)", 10)} ${pad("Mx(kN-m)", 10)} ${pad("My(kN-m)", 10)}`,
+    rule,
+    ...rows,
+    rule,
+    `            ${pad("합계", 4)} ${pad("", 9)} ${pad(sci(sumA), 11)} ${pad("", 9)} ${pad("", 9)} ${pad("", 9)} ${pad("", 9)} ${pad(fmt(sumF), 10)} ${pad(fmt(sumMx), 10)} ${pad(fmt(sumMy), 10)}`,
+    REPORT_FOLD_CLOSE,
+    "",
+  ];
 }
 
 function extremeBarLabel(parts: SectionResponse): string {

@@ -3,7 +3,7 @@ import { describe, expect, it } from "vitest";
 import { rectangleRings } from "../engine/geometry";
 import { generateRectangleRebars } from "../engine/rebarLayout";
 import { computeSurface } from "../engine/surface";
-import { buildReport, type ReportColumn } from "../report";
+import { buildReport, parseReportFolds, REPORT_FOLD_OPEN, type ReportColumn } from "../report";
 import { loadOrWriteGolden } from "../engine/__tests__/golden";
 import type { DemandInput } from "../engine/demand";
 import type { DesignCodeId, MaterialSet, SectionModel } from "../engine/types";
@@ -170,6 +170,25 @@ describe("보고서", () => {
 
   it("2축 함정을 경고문으로 남긴다", () => {
     expect(strength).toContain("편심 방향으로 단면을 회전시켜 1축 계산하는 방법은");
+  });
+
+  it("파이버 적분이면 밴드 표를 접는 구간으로 넣고, 밴드 합이 Cc/Mcx/Mcy 와 같다", () => {
+    const num = (re: RegExp) => Number(lsd.match(re)![1]);
+    expect(lsd).toContain("밴드 도심 변형률 ε_i");
+    expect(lsd).not.toContain("등가블록깊이");
+    expect(num(/ΣF = (-?[\d.]+) kN \(= Cc\)/)).toBe(num(/Cc  = +(-?[\d.]+) kN/));
+    expect(num(/ΣMx = (-?[\d.]+) kN-m \(= Mcx\)/)).toBe(num(/Mcx = +(-?[\d.]+),/));
+    expect(num(/ΣMy = (-?[\d.]+) kN-m \(= Mcy\)/)).toBe(num(/Mcy = +(-?[\d.]+),/));
+
+    const folds = parseReportFolds(lsd).filter((segment) => segment.kind === "fold");
+    expect(folds).toHaveLength(1);
+    expect(folds[0].title).toBe("밴드 표 (60개)");
+    expect(folds[0].text.split("\n").filter((line) => /^ +\d+ /.test(line))).toHaveLength(60);
+    expect(folds[0].text).toContain("합계");
+
+    // 등가블록 보고서에는 밴드 표가 없다.
+    expect(strength).not.toContain(REPORT_FOLD_OPEN);
+    expect(strength).toContain("Cc = (0.85·eta)·fcd·Ac,comp");
   });
 
   it("골든 스냅샷과 일치한다", () => {
